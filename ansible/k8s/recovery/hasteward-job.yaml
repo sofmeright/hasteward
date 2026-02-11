@@ -1,11 +1,15 @@
 ---
 # hasteward-job.yaml - Run HASteward as a Kubernetes Job
 #
-# Downloads playbook files from Flux source-controller, runs hasteward
+# Downloads playbook files from the hasteward repository, runs hasteward
 # with the specified parameters, writes backups to a mounted PVC.
+#
+# Repository: https://gitlab.prplanit.com/precisionplanit/hasteward
+#             https://github.com/sofmeright/hasteward
 #
 # Prerequisites (one-time):
 #   kubectl apply -f hasteward-job.yaml -l app.kubernetes.io/component=rbac
+#   kubectl apply -f hasteward-job.yaml -l app.kubernetes.io/component=storage
 #
 # Run (edit the Job args, then):
 #   kubectl apply -f hasteward-job.yaml -l app.kubernetes.io/component=job
@@ -22,9 +26,6 @@
 #   -e retain_escrow=true           (optional, keep escrow after repair)
 #   -e backup_method=<dump|native>  (optional, default: dump)
 #   -e backup_file=<path>           (optional, restore only)
-#
-# Flux source-controller artifact URL pattern (standard on any Flux cluster):
-#   http://source-controller.flux-system.svc.cluster.local/gitrepository/<git-ns>/<git-name>/latest.tar.gz
 
 # --- RBAC (apply once) ---
 apiVersion: v1
@@ -128,16 +129,10 @@ spec:
             - -c
             - |
               set -e
-              ARTIFACT_URL=$(wget -qO- http://source-controller.flux-system.svc.cluster.local./gitrepository/flux-system/flux-system/latest.tar.gz 2>&1 || true)
-              # Fetch actual artifact URL from GitRepository status via k8s API
-              URL=$(wget -qO- \
-                --header "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
-                --no-check-certificate \
-                https://kubernetes.default.svc/apis/source.toolkit.fluxcd.io/v1/namespaces/flux-system/gitrepositories/flux-system \
-                | sed -n 's/.*"url":"\([^"]*\.tar\.gz\)".*/\1/p' | head -1)
-              echo "Fetching: $URL"
-              wget -qO /tmp/repo.tar.gz "$URL"
-              tar xzf /tmp/repo.tar.gz -C /workspace
+              REPO_URL="https://gitlab.prplanit.com/precisionplanit/hasteward/-/archive/main/hasteward-main.tar.gz"
+              echo "Fetching: $REPO_URL"
+              wget -qO /tmp/repo.tar.gz "$REPO_URL"
+              tar xzf /tmp/repo.tar.gz --strip-components=1 -C /workspace
               echo "Playbooks fetched:"
               ls /workspace/ansible/k8s/recovery/hasteward*
           volumeMounts:
