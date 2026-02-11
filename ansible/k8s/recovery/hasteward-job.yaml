@@ -127,8 +127,16 @@ spec:
             - sh
             - -c
             - |
-              wget -qO /tmp/repo.tar.gz \
-                http://source-controller.flux-system.svc.cluster.local/gitrepository/flux-system/flux-system/latest.tar.gz
+              set -e
+              ARTIFACT_URL=$(wget -qO- http://source-controller.flux-system.svc.cluster.local./gitrepository/flux-system/flux-system/latest.tar.gz 2>&1 || true)
+              # Fetch actual artifact URL from GitRepository status via k8s API
+              URL=$(wget -qO- \
+                --header "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+                --no-check-certificate \
+                https://kubernetes.default.svc/apis/source.toolkit.fluxcd.io/v1/namespaces/flux-system/gitrepositories/flux-system \
+                | sed -n 's/.*"url":"\([^"]*\.tar\.gz\)".*/\1/p' | head -1)
+              echo "Fetching: $URL"
+              wget -qO /tmp/repo.tar.gz "$URL"
               tar xzf /tmp/repo.tar.gz -C /workspace
               echo "Playbooks fetched:"
               ls /workspace/ansible/k8s/recovery/hasteward*
