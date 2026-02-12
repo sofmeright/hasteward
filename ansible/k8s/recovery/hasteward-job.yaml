@@ -23,7 +23,6 @@
 #   -e instance_number=<N>          (optional, repair only)
 #   -e force=true                   (optional, targeted repair only)
 #   -e no_escrow=true               (optional, skip escrow)
-#   -e retain_escrow=true           (optional, keep escrow after repair)
 #   -e backup_method=<dump|native>  (optional, default: dump)
 #   -e backup_file=<path>           (optional, restore only)
 

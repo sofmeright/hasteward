@@ -1,0 +1,14 @@
+apiVersion: clinic.hasteward.prplanit.com/v1alpha1
+kind: BackupRepository
+metadata:
+  name: s3
+spec:
+  restic:
+    repository: s3:http://ceph-rgw.gorons-bracelet.svc/hasteward
+    passwordSecretRef:
+      name: hasteward-restic-password
+      namespace: fairy-bottle
+      key: password
+    envSecretRef:
+      name: hasteward-s3-credentials
+      namespace: fairy-bottle

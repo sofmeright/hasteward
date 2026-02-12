@@ -1,0 +1,11 @@
+apiVersion: clinic.hasteward.prplanit.com/v1alpha1
+kind: BackupRepository
+metadata:
+  name: local
+spec:
+  restic:
+    repository: /backups/restic/local
+    passwordSecretRef:
+      name: hasteward-restic-password
+      namespace: fairy-bottle
+      key: password

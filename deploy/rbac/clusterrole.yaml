@@ -1,0 +1,50 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: hasteward
+  labels:
+    app.kubernetes.io/name: hasteward
+    app.kubernetes.io/component: rbac
+rules:
+  # CNPG Cluster CRs — watch, get, list, patch annotations
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["clusters"]
+    verbs: ["get", "list", "watch", "patch"]
+  # CNPG Backup CRs — create native backups
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["backups"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  # MariaDB CRs — watch, get, list, patch annotations
+  - apiGroups: ["k8s.mariadb.com"]
+    resources: ["mariadbs"]
+    verbs: ["get", "list", "watch", "patch"]
+  # Hasteward CRDs — full access
+  - apiGroups: ["clinic.hasteward.prplanit.com"]
+    resources: ["backuprepositories", "backuppolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["clinic.hasteward.prplanit.com"]
+    resources: ["backuprepositories/status"]
+    verbs: ["get", "update", "patch"]
+  # Pods — exec for dump/restore, get/list for triage
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  # Secrets — read repo credentials
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+  # PVCs — triage disk usage checks
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list"]
+  # Events — emit events
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  # Leases — leader election
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

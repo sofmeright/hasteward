@@ -1,0 +1,94 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: backuprepositories.clinic.hasteward.prplanit.com
+spec:
+  group: clinic.hasteward.prplanit.com
+  names:
+    kind: BackupRepository
+    listKind: BackupRepositoryList
+    plural: backuprepositories
+    singular: backuprepository
+    shortNames:
+      - br
+      - brepo
+  scope: Cluster
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - restic
+              properties:
+                restic:
+                  type: object
+                  required:
+                    - repository
+                    - passwordSecretRef
+                  properties:
+                    repository:
+                      type: string
+                      description: "Restic repository URL or local path"
+                    passwordSecretRef:
+                      type: object
+                      required:
+                        - name
+                        - namespace
+                        - key
+                      properties:
+                        name:
+                          type: string
+                        namespace:
+                          type: string
+                        key:
+                          type: string
+                    envSecretRef:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        namespace:
+                          type: string
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                lastCheck:
+                  type: string
+                  format: date-time
+                snapshotCount:
+                  type: integer
+                totalSize:
+                  type: string
+                deduplicatedSize:
+                  type: string
+                lastError:
+                  type: string
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Repository
+          type: string
+          jsonPath: .spec.restic.repository
+        - name: Ready
+          type: boolean
+          jsonPath: .status.ready
+        - name: Snapshots
+          type: integer
+          jsonPath: .status.snapshotCount
+        - name: Total Size
+          type: string
+          jsonPath: .status.totalSize
+        - name: Dedup Size
+          type: string
+          jsonPath: .status.deduplicatedSize
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp

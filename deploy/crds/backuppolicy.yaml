@@ -1,0 +1,77 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: backuppolicies.clinic.hasteward.prplanit.com
+spec:
+  group: clinic.hasteward.prplanit.com
+  names:
+    kind: BackupPolicy
+    listKind: BackupPolicyList
+    plural: backuppolicies
+    singular: backuppolicy
+    shortNames:
+      - bp
+      - bpol
+  scope: Cluster
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                backupSchedule:
+                  type: string
+                  description: "Cron expression for backup frequency"
+                triageSchedule:
+                  type: string
+                  description: "Cron expression for health-check frequency"
+                mode:
+                  type: string
+                  description: "Operation mode: triage, repair, or disabled"
+                  enum:
+                    - triage
+                    - repair
+                    - disabled
+                retention:
+                  type: object
+                  properties:
+                    keepLast:
+                      type: integer
+                    keepDaily:
+                      type: integer
+                    keepWeekly:
+                      type: integer
+                    keepMonthly:
+                      type: integer
+                repositories:
+                  type: array
+                  items:
+                    type: string
+                  description: "BackupRepository names to target"
+                healTimeout:
+                  type: integer
+                  description: "Heal operation timeout in seconds"
+                deleteTimeout:
+                  type: integer
+                  description: "Delete operation timeout in seconds"
+      additionalPrinterColumns:
+        - name: Backup Schedule
+          type: string
+          jsonPath: .spec.backupSchedule
+        - name: Triage Schedule
+          type: string
+          jsonPath: .spec.triageSchedule
+        - name: Mode
+          type: string
+          jsonPath: .spec.mode
+        - name: Repositories
+          type: string
+          jsonPath: .spec.repositories
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
