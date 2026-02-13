@@ -25,13 +25,16 @@ rules:
   - apiGroups: ["clinic.hasteward.prplanit.com"]
     resources: ["backuprepositories/status"]
     verbs: ["get", "update", "patch"]
-  # Pods — exec for dump/restore, get/list for triage
+  # Pods — exec for dump/restore, get/list for triage, create/delete for heal helpers
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get", "list", "watch", "delete"]
+    verbs: ["get", "list", "watch", "create", "delete"]
   - apiGroups: [""]
     resources: ["pods/exec"]
     verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
   # Secrets — read repo credentials
   - apiGroups: [""]
     resources: ["secrets"]
@@ -44,6 +47,10 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch"]
+  # StatefulSets — scale subresource for Galera node healing
+  - apiGroups: ["apps"]
+    resources: ["statefulsets/scale"]
+    verbs: ["get", "update"]
   # Leases — leader election
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
