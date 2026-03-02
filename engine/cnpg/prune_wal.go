@@ -68,19 +68,13 @@ func (e *Engine) PruneWAL(ctx context.Context) error {
 	output.Success("Target %s is primary and not ready — proceeding", targetPod)
 
 	// Check that replicas exist and are reasonably caught up
-	replicaCount := 0
-	for _, a := range triageResult.Assessments {
-		if a.Pod == targetPod {
-			continue
-		}
-		if a.IsRunning {
-			replicaCount++
-		}
-	}
+	// ReadyCount from CNPG status includes the primary, so ready replicas = ReadyCount - (1 if primary is ready, else 0)
+	// Since our primary is NOT ready (checked above), ReadyCount == number of healthy replicas
+	replicaCount := triageResult.ReadyCount
 	if replicaCount == 0 {
-		return fmt.Errorf("ABORT: no running replicas found. Cannot verify data safety without at least one healthy replica")
+		return fmt.Errorf("ABORT: no ready replicas found. Cannot verify data safety without at least one healthy replica")
 	}
-	output.Success("Found %d running replica(s)", replicaCount)
+	output.Success("Found %d ready replica(s)", replicaCount)
 
 	// Resolve PVC name for the target instance
 	targetPVC, err := e.resolvePVC(ctx, targetPod)
@@ -323,14 +317,18 @@ func (e *Engine) resolvePVC(ctx context.Context, podName string) (string, error)
 func (e *Engine) discoverPostgresInfo(ctx context.Context, triage *common.TriageResult) (image, uid, gid string, err error) {
 	c := k8s.GetClients()
 	ns := e.cfg.Namespace
+	primary := k8s.GetNestedString(e.cluster, "status", "currentPrimary")
 
-	// Find a healthy running pod
+	// Find a non-primary pod that is Running and Ready
 	for _, a := range triage.Assessments {
-		if !a.IsRunning || !a.IsReady {
+		if a.Pod == primary {
 			continue
 		}
 		pod, podErr := c.Clientset.CoreV1().Pods(ns).Get(ctx, a.Pod, metav1.GetOptions{})
 		if podErr != nil {
+			continue
+		}
+		if pod.Status.Phase != "Running" || len(pod.Status.ContainerStatuses) == 0 || !pod.Status.ContainerStatuses[0].Ready {
 			continue
 		}
 		for _, container := range pod.Spec.Containers {
