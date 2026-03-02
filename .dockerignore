@@ -1,0 +1,12 @@
+.git
+.gitignore
+.gitlab-ci.yml
+.stagefreight.yml
+.stagefreight/
+.dockerignore
+.cache/
+docs/
+deploy/
+ansible/
+README.md
+LICENSE
