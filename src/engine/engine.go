@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
 )
 
 // Engine defines the interface that each database engine must implement.
@@ -30,6 +31,12 @@ type Engine interface {
 	// PruneWAL clears accumulated WAL from a disk-full instance.
 	// This is a destructive operation — only safe when replicas are caught up.
 	PruneWAL(ctx context.Context) error
+
+	// Bootstrap performs a full cluster bootstrap when all nodes are down.
+	// This is a DANGEROUS operation. It sets safe_to_bootstrap on the best candidate,
+	// patches the CR, and brings the cluster back up.
+	// Returns a BootstrapResult with decision and actions.
+	Bootstrap(ctx context.Context, dryRun bool) (*model.BootstrapResult, error)
 }
 
 // registry maps engine names to constructor functions.

@@ -7,6 +7,7 @@ import (
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/k8s"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -30,6 +31,11 @@ type Engine struct {
 }
 
 func (e *Engine) Name() string { return "cnpg" }
+
+// Bootstrap is not applicable to CNPG clusters (CNPG operator handles failover).
+func (e *Engine) Bootstrap(_ context.Context, _ bool) (*model.BootstrapResult, error) {
+	return nil, fmt.Errorf("bootstrap is not supported for CNPG clusters — CNPG operator handles failover automatically")
+}
 
 func (e *Engine) Validate(ctx context.Context, cfg *common.Config) error {
 	e.cfg = cfg

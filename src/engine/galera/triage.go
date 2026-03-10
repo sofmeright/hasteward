@@ -857,6 +857,10 @@ func (e *Engine) triageDisplay(data *galeraTriageData, result *common.TriageResu
 			data.bestSeqnoNode, data.bestSeqnoValue)
 		fmt.Println("The mariadb-operator should handle recovery automatically via galera.recovery.")
 		fmt.Println("If stuck, check the MariaDB CR status.galeraRecovery field.")
+		fmt.Println()
+		fmt.Println("To manually bootstrap the cluster:")
+		fmt.Printf("  hasteward bootstrap -e galera -c %s -n %s --dry-run\n", e.cfg.ClusterName, e.cfg.Namespace)
+		fmt.Printf("  hasteward bootstrap -e galera -c %s -n %s\n", e.cfg.ClusterName, e.cfg.Namespace)
 	}
 }
 
