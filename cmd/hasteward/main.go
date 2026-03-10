@@ -11,7 +11,7 @@ import (
 func main() {
 	common.InitLogging(false)
 	if err := cmd.RootCmd.Execute(); err != nil {
-		output.Fatal("Error: %v", err)
+		output.Stderr("Error: %v", err)
 		os.Exit(1)
 	}
 }

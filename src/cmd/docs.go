@@ -1,10 +1,10 @@
 package cmd
 
 import (
-	"fmt"
 	"os"
 
 	"gitlab.prplanit.com/precisionplanit/hasteward/internal/docsgen"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/output"
 
 	"github.com/spf13/cobra"
 )
@@ -34,7 +34,7 @@ var docsGenerateCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Fprintf(os.Stderr, "Generated: %s\n", docsOutputPath)
+		output.Stderr("Generated: %s", docsOutputPath)
 		return nil
 	},
 }

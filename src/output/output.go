@@ -147,9 +147,9 @@ func Fail(format string, args ...any) {
 	fmt.Fprintf(writer, "[FAIL] %s\n", fmt.Sprintf(format, args...))
 }
 
-// Fatal writes an error message to stderr. Always writes regardless of output
-// mode — this is for unrecoverable CLI errors before output mode is configured.
-func Fatal(format string, args ...any) {
+// Stderr writes to stderr unconditionally, regardless of output mode.
+// Used for CLI messages that must not mix with stdout data (errors, status).
+func Stderr(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 }
 
