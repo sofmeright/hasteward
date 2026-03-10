@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/printer"
 
 	"github.com/spf13/cobra"
 )
@@ -13,6 +15,11 @@ var backupCmd = &cobra.Command{
 	Use:   "backup",
 	Short: "Back up a database cluster",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		p, err := InitPrinter("backup")
+		if err != nil {
+			return err
+		}
+
 		if Cfg.BackupMethod != "native" {
 			if Cfg.BackupsPath == "" {
 				return fmt.Errorf("backup requires --backups-path (or --method native for CNPG S3)")
@@ -29,10 +36,29 @@ var backupCmd = &cobra.Command{
 
 		result, err := eng.Backup(cmd.Context())
 		if err != nil {
+			if !p.IsHuman() {
+				printer.PrintResult(p, (*model.BackupResult)(nil), nil, err)
+			}
 			return err
 		}
 
-		output.Complete(fmt.Sprintf("Backup complete — snapshot %s (%s)", result.SnapshotID, result.Duration.Truncate(time.Second)))
+		if p.IsHuman() {
+			output.Complete(fmt.Sprintf("Backup complete — snapshot %s (%s)", result.SnapshotID, result.Duration.Truncate(time.Second)))
+		} else {
+			backupResult := &model.BackupResult{
+				Engine: Cfg.Engine,
+				Cluster: model.ObjectRef{
+					Namespace: Cfg.Namespace,
+					Name:      Cfg.ClusterName,
+				},
+				SnapshotID: result.SnapshotID,
+				Repository: result.Repository,
+				Size:       result.Size,
+				Duration:   result.Duration,
+				Tags:       result.Tags,
+			}
+			printer.PrintResult(p, backupResult, nil, nil)
+		}
 		return nil
 	},
 }

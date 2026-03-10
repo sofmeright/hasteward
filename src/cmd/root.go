@@ -10,12 +10,22 @@ import (
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/k8s"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/printer"
 
 	"github.com/spf13/cobra"
 )
 
 // Cfg is the shared runtime configuration bound to root persistent flags.
 var Cfg common.Config
+
+// outputMode holds the raw --output flag value before parsing.
+var outputMode string
+
+// dryRun holds the --dry-run flag state.
+var dryRun bool
+
+// P is the active printer for the current command invocation.
+var P *printer.Printer
 
 // RootCmd is the top-level cobra command.
 var RootCmd = &cobra.Command{
@@ -45,11 +55,30 @@ func init() {
 	pf.IntVar(&Cfg.DeleteTimeout, "delete-timeout", common.EnvInt("DELETE_TIMEOUT", 300), "Delete wait timeout in seconds")
 	pf.StringVar(&Cfg.Kubeconfig, "kubeconfig", common.EnvRaw("KUBECONFIG", ""), "Path to kubeconfig file")
 	pf.BoolVarP(&Cfg.Verbose, "verbose", "v", common.EnvBool("VERBOSE", false), "Verbose output (debug logging)")
+	pf.BoolVar(&dryRun, "dry-run", false, "Show planned actions without executing (destructive commands)")
+	pf.StringVar(&outputMode, "output", common.Env("OUTPUT", "auto"), "Output format: auto, human, json, jsonl")
+	pf.Bool("no-color", false, "Disable color output")
+	pf.Bool("debug", false, "Enable debug output")
 
 	// Instance flag needs special handling for optional int
 	pf.StringP("instance", "i", common.Env("INSTANCE", ""), "Target specific instance number")
 
 	RootCmd.AddCommand(triageCmd, repairCmd, backupCmd, restoreCmd, serveCmd, getCmd, exportCmd, pruneCmd)
+}
+
+// IsDryRun returns whether --dry-run was specified.
+func IsDryRun() bool {
+	return dryRun
+}
+
+// InitPrinter creates the printer for the current command.
+func InitPrinter(command string) (*printer.Printer, error) {
+	mode, err := printer.ParseOutputMode(outputMode)
+	if err != nil {
+		return nil, err
+	}
+	P = printer.New(mode, command)
+	return P, nil
 }
 
 // ResolveInstance parses the --instance flag into Cfg.InstanceNumber.
@@ -71,7 +100,8 @@ func ResolveInstance(cmd *cobra.Command) error {
 func PreRun(cmd *cobra.Command, mode string) (engine.Engine, error) {
 	Cfg.Mode = mode
 
-	if Cfg.Verbose {
+	debug, _ := cmd.Flags().GetBool("debug")
+	if Cfg.Verbose || debug {
 		os.Setenv(common.EnvPrefix+"LOG_LEVEL", "debug")
 		common.InitLogging(false)
 	}
@@ -108,7 +138,12 @@ func PreRun(cmd *cobra.Command, mode string) (engine.Engine, error) {
 	}
 
 	ctx := cmd.Context()
-	output.Header(eng.Name(), mode, Cfg.ClusterName, Cfg.Namespace)
+
+	// In human mode, print the legacy header
+	if P == nil || P.IsHuman() {
+		output.Header(eng.Name(), mode, Cfg.ClusterName, Cfg.Namespace)
+	}
+
 	if err := eng.Validate(ctx, &Cfg); err != nil {
 		return nil, err
 	}
