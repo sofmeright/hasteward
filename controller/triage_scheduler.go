@@ -7,6 +7,10 @@ import (
 	v1alpha1 "gitlab.prplanit.com/precisionplanit/hasteward/api/v1alpha1"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/backup"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/provider"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/repair"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/triage"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/metrics"
 )
 
@@ -28,19 +32,25 @@ func (s *Scheduler) runTriage(db *ManagedDB) {
 		DeleteTimeout: db.Config.DeleteTimeout,
 	}
 
-	// Get and validate engine
-	eng, err := engine.Get(cfg.Engine)
+	// Get and validate provider
+	prov, err := provider.GetProvider(cfg.Engine)
 	if err != nil {
 		log.Error("Engine not found", "error", err)
 		return
 	}
-	if err := eng.Validate(ctx, cfg); err != nil {
+	if err := prov.Validate(ctx, cfg); err != nil {
 		log.Error("Engine validation failed", "error", err)
 		return
 	}
 
-	// Run triage
-	result, err := eng.Triage(ctx)
+	// Get triager and run
+	triager, err := triage.Get(prov)
+	if err != nil {
+		log.Error("Triager not found", "error", err)
+		return
+	}
+
+	result, err := triage.Run(ctx, triager, engine.NopSink{})
 	if err != nil {
 		log.Error("Triage failed", "error", err)
 		return
@@ -110,17 +120,23 @@ func (s *Scheduler) runAutoRepair(ctx context.Context, db *ManagedDB, log *slog.
 		DeleteTimeout:  db.Config.DeleteTimeout,
 	}
 
-	eng, err := engine.Get(cfg.Engine)
+	prov, err := provider.GetProvider(cfg.Engine)
 	if err != nil {
 		log.Error("Engine not found for repair", "error", err)
 		return
 	}
-	if err := eng.Validate(ctx, cfg); err != nil {
+	if err := prov.Validate(ctx, cfg); err != nil {
 		log.Error("Engine validation failed for repair", "error", err)
 		return
 	}
 
-	result, err := eng.Repair(ctx)
+	repairer, err := repair.Get(prov)
+	if err != nil {
+		log.Error("Repairer not found", "error", err)
+		return
+	}
+
+	result, err := repair.Run(ctx, repairer, engine.NopSink{})
 	if err != nil {
 		log.Error("Auto-repair failed", "error", err)
 		metrics.RecordRepairFailure(db.Engine, db.ClusterName, db.Namespace)

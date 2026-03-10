@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/provider"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/k8s"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/printer"
@@ -101,8 +101,8 @@ func ResolveInstance(cmd *cobra.Command) error {
 	return nil
 }
 
-// PreRun validates required flags, initializes K8s clients, and resolves the engine.
-func PreRun(cmd *cobra.Command, mode string) (engine.Engine, error) {
+// PreRun validates required flags, initializes K8s clients, and resolves the engine provider.
+func PreRun(cmd *cobra.Command, mode string) (provider.EngineProvider, error) {
 	Cfg.Mode = mode
 
 	debug, _ := cmd.Flags().GetBool("debug")
@@ -142,7 +142,7 @@ func PreRun(cmd *cobra.Command, mode string) (engine.Engine, error) {
 		return nil, fmt.Errorf("kubernetes init failed: %w", err)
 	}
 
-	eng, err := engine.Get(Cfg.Engine)
+	prov, err := provider.GetProvider(Cfg.Engine)
 	if err != nil {
 		return nil, err
 	}
@@ -151,12 +151,12 @@ func PreRun(cmd *cobra.Command, mode string) (engine.Engine, error) {
 
 	// In human mode, print the legacy header
 	if P == nil || P.IsHuman() {
-		output.Header(eng.Name(), mode, Cfg.ClusterName, Cfg.Namespace)
+		output.Header(prov.Name(), mode, Cfg.ClusterName, Cfg.Namespace)
 	}
 
-	if err := eng.Validate(ctx, &Cfg); err != nil {
+	if err := prov.Validate(ctx, &Cfg); err != nil {
 		return nil, err
 	}
 
-	return eng, nil
+	return prov, nil
 }

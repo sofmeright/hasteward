@@ -7,12 +7,14 @@ import (
 	"strconv"
 
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/printer"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/restic"
 
 	"github.com/spf13/cobra"
 )
 
-var exportOutput string
+var exportFile string
 
 var exportCmd = &cobra.Command{
 	Use:   "export",
@@ -25,14 +27,19 @@ Examples:
   hasteward export -e cnpg -c zitadel-postgres -n zeldas-lullaby --snapshot latest -o dump.sql.gz
   hasteward export -e cnpg -c zitadel-postgres -n zeldas-lullaby --snapshot abc123 -i 2 -o instance2.sql.gz`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		p, err := InitPrinter("export")
+		if err != nil {
+			return err
+		}
+
 		if Cfg.BackupsPath == "" {
 			return fmt.Errorf("export requires --backups-path")
 		}
 		if Cfg.ResticPassword == "" {
 			return fmt.Errorf("export requires RESTIC_PASSWORD env var")
 		}
-		if exportOutput == "" {
-			return fmt.Errorf("export requires --output/-o")
+		if exportFile == "" {
+			return fmt.Errorf("export requires --file/-o")
 		}
 		if Cfg.Engine == "" {
 			return fmt.Errorf("export requires --engine/-e")
@@ -79,7 +86,7 @@ Examples:
 			"namespace": Cfg.Namespace,
 		}
 
-		f, err := os.Create(exportOutput)
+		f, err := os.Create(exportFile)
 		if err != nil {
 			return fmt.Errorf("failed to create output file: %w", err)
 		}
@@ -93,19 +100,30 @@ Examples:
 			snapshot = "latest"
 		}
 
-		common.InfoLog("Exporting snapshot %s path %s to %s", snapshot, snapshotPath, exportOutput)
+		common.InfoLog("Exporting snapshot %s path %s to %s", snapshot, snapshotPath, exportFile)
 		if err := rc.Dump(cmd.Context(), snapshot, snapshotPath, gz, tags); err != nil {
 			gz.Close()
 			f.Close()
-			os.Remove(exportOutput)
+			os.Remove(exportFile)
 			return fmt.Errorf("export failed: %w", err)
 		}
 
-		common.InfoLog("Export complete: %s", exportOutput)
+		common.InfoLog("Export complete: %s", exportFile)
+
+		result := &model.ExportResult{
+			OutputFile: exportFile,
+			Snapshot:   snapshot,
+			Engine:     Cfg.Engine,
+			Cluster:    Cfg.ClusterName,
+			Namespace:  Cfg.Namespace,
+		}
+		if !p.IsHuman() {
+			printer.PrintResult(p, result, nil, nil)
+		}
 		return nil
 	},
 }
 
 func init() {
-	exportCmd.Flags().StringVarP(&exportOutput, "output", "o", "", "Output file path (e.g., dump.sql.gz)")
+	exportCmd.Flags().StringVarP(&exportFile, "file", "o", "", "Output file path (e.g., dump.sql.gz)")
 }

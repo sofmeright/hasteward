@@ -1,19 +1,47 @@
-package cnpg
+package prunewal
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/provider"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/triage"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/k8s"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
+
+func init() {
+	Register("cnpg", func(ep provider.EngineProvider) (Pruner, error) {
+		p, ok := ep.(*provider.CNPGProvider)
+		if !ok {
+			return nil, fmt.Errorf("cnpg pruner requires *provider.CNPGProvider, got %T", ep)
+		}
+		t, err := triage.Get(p)
+		if err != nil {
+			return nil, fmt.Errorf("cnpg pruner: failed to get triager: %w", err)
+		}
+		return &cnpgPruner{p: p, triager: t}, nil
+	})
+}
+
+// cnpgPruner implements Pruner for CloudNativePG PostgreSQL clusters.
+type cnpgPruner struct {
+	p       *provider.CNPGProvider
+	triager triage.Triager
+}
+
+func (w *cnpgPruner) Name() string { return "cnpg" }
 
 // PruneWAL clears accumulated WAL from a disk-full CNPG instance.
 //
@@ -22,20 +50,21 @@ import (
 //   - The WAL is deadweight held by replication slots that can't advance
 //     (typically because replicas were disconnected and are now caught up)
 //
-// Flow: triage → safety check → fence → mount PVC → clear pg_wal → unfence
-func (e *Engine) PruneWAL(ctx context.Context) error {
-	ns := e.cfg.Namespace
+// Flow: triage -> safety check -> fence -> mount PVC -> clear pg_wal -> unfence
+func (w *cnpgPruner) PruneWAL(ctx context.Context) error {
+	cfg := w.p.Config()
+	ns := cfg.Namespace
 	c := k8s.GetClients()
 
-	if e.cfg.InstanceNumber == nil {
+	if cfg.InstanceNumber == nil {
 		return fmt.Errorf("prune wal requires --instance/-i to specify which instance to clear")
 	}
-	instanceNum := *e.cfg.InstanceNumber
-	targetPod := fmt.Sprintf("%s-%d", e.cfg.ClusterName, instanceNum)
+	instanceNum := *cfg.InstanceNumber
+	targetPod := fmt.Sprintf("%s-%d", cfg.ClusterName, instanceNum)
 
 	// Phase 1: Triage to understand cluster state
 	output.Section("Phase 1: Triage")
-	triageResult, err := e.Triage(ctx)
+	triageResult, err := triage.Run(ctx, w.triager, engine.NopSink{})
 	if err != nil {
 		return fmt.Errorf("triage failed: %w", err)
 	}
@@ -56,7 +85,7 @@ func (e *Engine) PruneWAL(ctx context.Context) error {
 	output.Section("Phase 2: Safety Checks")
 
 	// Must be the primary (WAL accumulates on primary, not replicas)
-	primary := k8s.GetNestedString(e.cluster, "status", "currentPrimary")
+	primary := k8s.GetNestedString(w.p.Cluster(), "status", "currentPrimary")
 	if primary != targetPod {
 		return fmt.Errorf("ABORT: %s is not the primary (primary is %s). WAL pruning only applies to primaries", targetPod, primary)
 	}
@@ -73,7 +102,7 @@ func (e *Engine) PruneWAL(ctx context.Context) error {
 	// Since our primary is NOT ready (checked above), ReadyCount == number of healthy replicas
 	replicaCount := triageResult.ReadyCount
 	if replicaCount == 0 {
-		if !e.cfg.Force {
+		if !cfg.Force {
 			return fmt.Errorf("ABORT: no ready replicas found. Cannot verify data safety without at least one healthy replica. Re-run with --force to override")
 		}
 		common.WarnLog("force=true — proceeding with WAL prune despite no ready replicas. Data safety cannot be verified by a replica.")
@@ -82,20 +111,20 @@ func (e *Engine) PruneWAL(ctx context.Context) error {
 	}
 
 	// Resolve PVC name for the target instance
-	targetPVC, err := e.resolvePVC(ctx, targetPod)
+	targetPVC, err := w.resolvePVC(ctx, targetPod)
 	if err != nil {
 		return fmt.Errorf("failed to resolve PVC for %s: %w", targetPod, err)
 	}
 
 	// Discover postgres image and UID/GID from a healthy replica
-	imageName, postgresUID, postgresGID, err := e.discoverPostgresInfo(ctx, triageResult)
+	imageName, postgresUID, postgresGID, err := w.discoverPostgresInfo(ctx, triageResult)
 	if err != nil {
 		return fmt.Errorf("failed to discover postgres info: %w", err)
 	}
 
 	// Phase 3: Fence and clear WAL
 	output.Section("Phase 3: Fence and Clear WAL")
-	walPodName := fmt.Sprintf("%s-prune-wal-%d-%d", e.cfg.ClusterName, instanceNum, time.Now().Unix())
+	walPodName := fmt.Sprintf("%s-prune-wal-%d-%d", cfg.ClusterName, instanceNum, time.Now().Unix())
 
 	walScript := `set -e
 PGDATA="/var/lib/postgresql/data/pgdata"
@@ -162,13 +191,13 @@ echo "=== WAL prune complete ==="
 		}
 		if fenceApplied {
 			common.WarnLog("WAL prune interrupted — fence left in place for safety. Instance %s is still fenced.", targetPod)
-			common.WarnLog("To remove fence: kubectl annotate cluster %s -n %s cnpg.io/fencedInstances-", e.cfg.ClusterName, ns)
+			common.WarnLog("To remove fence: kubectl annotate cluster %s -n %s cnpg.io/fencedInstances-", cfg.ClusterName, ns)
 		}
 	}
 
 	// Step 1: Fence
 	output.Bullet(0, "1. Fence instance %s", targetPod)
-	if err := e.fenceInstance(ctx, targetPod); err != nil {
+	if err := w.fenceInstance(ctx, targetPod); err != nil {
 		return fmt.Errorf("failed to fence %s: %w", targetPod, err)
 	}
 	fenceApplied = true
@@ -222,7 +251,7 @@ echo "=== WAL prune complete ==="
 
 	// Step 3: Aggressively delete target pod until WAL prune pod acquires PVC
 	output.Bullet(0, "3. Acquiring PVC from fenced pod")
-	deleteTimeout := e.cfg.DeleteTimeout
+	deleteTimeout := cfg.DeleteTimeout
 	if deleteTimeout <= 0 {
 		deleteTimeout = 300
 	}
@@ -241,7 +270,7 @@ echo "=== WAL prune complete ==="
 			break
 		}
 		if phase == "Failed" {
-			e.logHealPodOutput(ctx, walPodName)
+			w.logHealPodOutput(ctx, walPodName)
 			cleanup()
 			return fmt.Errorf("WAL prune pod failed before acquiring PVC")
 		}
@@ -273,20 +302,20 @@ echo "=== WAL prune complete ==="
 			break
 		}
 		if string(hp.Status.Phase) == "Failed" {
-			e.logHealPodOutput(ctx, walPodName)
+			w.logHealPodOutput(ctx, walPodName)
 			cleanup()
 			return fmt.Errorf("WAL prune pod FAILED")
 		}
 	}
 
 	if !succeeded {
-		e.logHealPodOutput(ctx, walPodName)
+		w.logHealPodOutput(ctx, walPodName)
 		cleanup()
 		return fmt.Errorf("WAL prune pod timed out")
 	}
 
 	// Display output
-	e.logHealPodOutput(ctx, walPodName)
+	w.logHealPodOutput(ctx, walPodName)
 
 	// Cleanup WAL prune pod
 	_ = c.Clientset.CoreV1().Pods(ns).Delete(ctx, walPodName, metav1.DeleteOptions{
@@ -297,7 +326,7 @@ echo "=== WAL prune complete ==="
 
 	// Step 5: Unfence
 	output.Bullet(0, "5. Removing fence for %s", targetPod)
-	if err := e.unfenceInstance(ctx, targetPod); err != nil {
+	if err := w.unfenceInstance(ctx, targetPod); err != nil {
 		common.WarnLog("Failed to unfence %s: %v", targetPod, err)
 	}
 	fenceApplied = false
@@ -324,10 +353,97 @@ echo "=== WAL prune complete ==="
 	return nil
 }
 
-// resolvePVC finds the PVC name for a given CNPG pod.
-func (e *Engine) resolvePVC(ctx context.Context, podName string) (string, error) {
+// fenceInstance adds a pod to the CNPG fenced instances annotation.
+func (w *cnpgPruner) fenceInstance(ctx context.Context, pod string) error {
 	c := k8s.GetClients()
-	pod, err := c.Clientset.CoreV1().Pods(e.cfg.Namespace).Get(ctx, podName, metav1.GetOptions{})
+	cfg := w.p.Config()
+
+	// Get current fence list
+	obj, err := c.Dynamic.Resource(k8s.CNPGClusterGVR).Namespace(cfg.Namespace).Get(
+		ctx, cfg.ClusterName, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+
+	annotations := k8s.GetNestedMap(obj, "metadata", "annotations")
+	current := provider.ParseFencedInstances(annotations)
+
+	// Check if already fenced
+	for _, f := range current {
+		if f == pod {
+			common.InfoLog("Instance %s already fenced", pod)
+			return nil
+		}
+	}
+
+	// Add to list
+	newList := append(current, pod)
+	fencedJSON, _ := json.Marshal(newList)
+	patch := fmt.Sprintf(`{"metadata":{"annotations":{"cnpg.io/fencedInstances":%q}}}`, string(fencedJSON))
+	_, err = c.Dynamic.Resource(k8s.CNPGClusterGVR).Namespace(cfg.Namespace).Patch(
+		ctx, cfg.ClusterName, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
+	return err
+}
+
+// unfenceInstance removes a pod from the CNPG fenced instances annotation.
+func (w *cnpgPruner) unfenceInstance(ctx context.Context, pod string) error {
+	c := k8s.GetClients()
+	cfg := w.p.Config()
+
+	// Get current fence list
+	obj, err := c.Dynamic.Resource(k8s.CNPGClusterGVR).Namespace(cfg.Namespace).Get(
+		ctx, cfg.ClusterName, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+
+	annotations := k8s.GetNestedMap(obj, "metadata", "annotations")
+	current := provider.ParseFencedInstances(annotations)
+
+	// Remove target
+	var remaining []string
+	for _, f := range current {
+		if f != pod {
+			remaining = append(remaining, f)
+		}
+	}
+
+	if len(remaining) == 0 {
+		// Remove annotation entirely
+		patch := `{"metadata":{"annotations":{"cnpg.io/fencedInstances":null}}}`
+		_, err = c.Dynamic.Resource(k8s.CNPGClusterGVR).Namespace(cfg.Namespace).Patch(
+			ctx, cfg.ClusterName, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
+	} else {
+		fencedJSON, _ := json.Marshal(remaining)
+		patch := fmt.Sprintf(`{"metadata":{"annotations":{"cnpg.io/fencedInstances":%q}}}`, string(fencedJSON))
+		_, err = c.Dynamic.Resource(k8s.CNPGClusterGVR).Namespace(cfg.Namespace).Patch(
+			ctx, cfg.ClusterName, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
+	}
+	return err
+}
+
+// logHealPodOutput fetches and displays logs from a heal pod.
+func (w *cnpgPruner) logHealPodOutput(ctx context.Context, podName string) {
+	c := k8s.GetClients()
+	cfg := w.p.Config()
+	req := c.Clientset.CoreV1().Pods(cfg.Namespace).GetLogs(podName, &corev1.PodLogOptions{})
+	stream, err := req.Stream(ctx)
+	if err != nil {
+		common.DebugLog("Failed to get heal pod logs: %v", err)
+		return
+	}
+	defer stream.Close()
+	data, _ := io.ReadAll(stream)
+	if len(data) > 0 {
+		common.InfoLog("Heal pod output:\n%s", string(data))
+	}
+}
+
+// resolvePVC finds the PVC name for a given CNPG pod.
+func (w *cnpgPruner) resolvePVC(ctx context.Context, podName string) (string, error) {
+	c := k8s.GetClients()
+	cfg := w.p.Config()
+	pod, err := c.Clientset.CoreV1().Pods(cfg.Namespace).Get(ctx, podName, metav1.GetOptions{})
 	if err != nil {
 		// Pod might be gone (fenced/deleted), try naming convention
 		// CNPG PVC name = pod name
@@ -343,13 +459,14 @@ func (e *Engine) resolvePVC(ctx context.Context, podName string) (string, error)
 }
 
 // discoverPostgresInfo finds the postgres image, UID, and GID from a healthy instance.
-func (e *Engine) discoverPostgresInfo(ctx context.Context, triage *model.TriageResult) (image, uid, gid string, err error) {
+func (w *cnpgPruner) discoverPostgresInfo(ctx context.Context, triageResult *model.TriageResult) (image, uid, gid string, err error) {
 	c := k8s.GetClients()
-	ns := e.cfg.Namespace
-	primary := k8s.GetNestedString(e.cluster, "status", "currentPrimary")
+	cfg := w.p.Config()
+	ns := cfg.Namespace
+	primary := k8s.GetNestedString(w.p.Cluster(), "status", "currentPrimary")
 
 	// Find a non-primary pod that is Running and Ready
-	for _, a := range triage.Assessments {
+	for _, a := range triageResult.Assessments {
 		if a.Pod == primary {
 			continue
 		}
@@ -383,13 +500,19 @@ func (e *Engine) discoverPostgresInfo(ctx context.Context, triage *model.TriageR
 	}
 
 	// Fallback to cluster spec image
-	image = k8s.GetNestedString(e.cluster, "status", "image")
+	image = k8s.GetNestedString(w.p.Cluster(), "status", "image")
 	if image == "" {
 		return "", "", "", fmt.Errorf("could not determine postgres image from cluster")
 	}
 	return image, "26", "26", nil // default postgres UID/GID
 }
 
+// ptr returns a pointer to the given value.
+func ptr[T any](v T) *T {
+	return &v
+}
+
+// parseInt64 parses a string to int64, returning 0 on failure.
 func parseInt64(s string) int64 {
 	var n int64
 	fmt.Sscanf(s, "%d", &n)

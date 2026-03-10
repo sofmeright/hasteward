@@ -6,10 +6,6 @@ import (
 
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/cmd"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
-
-	// Register engines via init()
-	_ "gitlab.prplanit.com/precisionplanit/hasteward/src/engine/cnpg"
-	_ "gitlab.prplanit.com/precisionplanit/hasteward/src/engine/galera"
 )
 
 func main() {

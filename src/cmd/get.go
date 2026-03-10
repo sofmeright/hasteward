@@ -10,6 +10,8 @@ import (
 	v1alpha1 "gitlab.prplanit.com/precisionplanit/hasteward/api/v1alpha1"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/k8s"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/printer"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/restic"
 
 	"github.com/spf13/cobra"
@@ -42,6 +44,11 @@ var getBackupsCmd = &cobra.Command{
 	Use:   "backups",
 	Short: "List restic backup snapshots",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		p, err := InitPrinter("get-backups")
+		if err != nil {
+			return err
+		}
+
 		if err := initGetClients(); err != nil {
 			return err
 		}
@@ -57,8 +64,7 @@ var getBackupsCmd = &cobra.Command{
 			tags["cluster"] = Cfg.ClusterName
 		}
 
-		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintf(w, "REPOSITORY\tSNAPSHOT\tTYPE\tENGINE\tNAMESPACE\tCLUSTER\tAGE\n")
+		var entries []model.SnapshotEntry
 
 		if Cfg.BackupsPath != "" && Cfg.ResticPassword != "" {
 			rc := restic.NewClient(Cfg.BackupsPath, Cfg.ResticPassword)
@@ -68,40 +74,52 @@ var getBackupsCmd = &cobra.Command{
 			}
 			for _, snap := range snapshots {
 				tm := snap.TagMap()
-				age := time.Since(snap.Time).Truncate(time.Second)
+				entries = append(entries, model.SnapshotEntry{
+					Repository: Cfg.BackupsPath, SnapshotID: snap.ShortID,
+					Type: tm["type"], Engine: tm["engine"],
+					Namespace: tm["namespace"], Cluster: tm["cluster"],
+					Age: formatAge(time.Since(snap.Time).Truncate(time.Second)),
+				})
+			}
+		} else {
+			repos, err := listRepositories(cmd.Context())
+			if err != nil {
+				return err
+			}
+			for _, repo := range repos {
+				rc, err := repoClient(cmd.Context(), &repo)
+				if err != nil {
+					common.WarnLog("Skipping repo %s: %v", repo.Name, err)
+					continue
+				}
+				snapshots, err := rc.Snapshots(cmd.Context(), tags)
+				if err != nil {
+					common.WarnLog("Failed to list snapshots from %s: %v", repo.Name, err)
+					continue
+				}
+				for _, snap := range snapshots {
+					tm := snap.TagMap()
+					entries = append(entries, model.SnapshotEntry{
+						Repository: repo.Name, SnapshotID: snap.ShortID,
+						Type: tm["type"], Engine: tm["engine"],
+						Namespace: tm["namespace"], Cluster: tm["cluster"],
+						Age: formatAge(time.Since(snap.Time).Truncate(time.Second)),
+					})
+				}
+			}
+		}
+
+		if p.IsHuman() {
+			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintf(w, "REPOSITORY\tSNAPSHOT\tTYPE\tENGINE\tNAMESPACE\tCLUSTER\tAGE\n")
+			for _, e := range entries {
 				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-					Cfg.BackupsPath, snap.ShortID, tm["type"], tm["engine"], tm["namespace"], tm["cluster"], formatAge(age))
+					e.Repository, e.SnapshotID, e.Type, e.Engine, e.Namespace, e.Cluster, e.Age)
 			}
 			w.Flush()
-			return nil
+		} else {
+			printer.PrintResult(p, &model.GetBackupsResult{Snapshots: entries}, nil, nil)
 		}
-
-		repos, err := listRepositories(cmd.Context())
-		if err != nil {
-			return err
-		}
-
-		for _, repo := range repos {
-			rc, err := repoClient(cmd.Context(), &repo)
-			if err != nil {
-				common.WarnLog("Skipping repo %s: %v", repo.Name, err)
-				continue
-			}
-
-			snapshots, err := rc.Snapshots(cmd.Context(), tags)
-			if err != nil {
-				common.WarnLog("Failed to list snapshots from %s: %v", repo.Name, err)
-				continue
-			}
-
-			for _, snap := range snapshots {
-				tm := snap.TagMap()
-				age := time.Since(snap.Time).Truncate(time.Second)
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-					repo.Name, snap.ShortID, tm["type"], tm["engine"], tm["namespace"], tm["cluster"], formatAge(age))
-			}
-		}
-		w.Flush()
 		return nil
 	},
 }
@@ -112,6 +130,11 @@ var getPoliciesCmd = &cobra.Command{
 	Use:   "policies",
 	Short: "List BackupPolicy resources",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		p, err := InitPrinter("get-policies")
+		if err != nil {
+			return err
+		}
+
 		if err := initGetClients(); err != nil {
 			return err
 		}
@@ -126,17 +149,32 @@ var getPoliciesCmd = &cobra.Command{
 			return fmt.Errorf("failed to list BackupPolicies: %w", err)
 		}
 
-		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintf(w, "NAME\tBACKUP SCHEDULE\tTRIAGE SCHEDULE\tMODE\tREPOSITORIES\n")
-		for _, p := range list.Items {
-			repos := "-"
-			if len(p.Spec.Repositories) > 0 {
-				repos = fmt.Sprintf("%v", p.Spec.Repositories)
-			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-				p.Name, p.Spec.BackupSchedule, p.Spec.TriageSchedule, p.Spec.Mode, repos)
+		var entries []model.PolicyEntry
+		for _, pol := range list.Items {
+			entries = append(entries, model.PolicyEntry{
+				Name:           pol.Name,
+				BackupSchedule: pol.Spec.BackupSchedule,
+				TriageSchedule: pol.Spec.TriageSchedule,
+				Mode:           pol.Spec.Mode,
+				Repositories:   pol.Spec.Repositories,
+			})
 		}
-		w.Flush()
+
+		if p.IsHuman() {
+			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintf(w, "NAME\tBACKUP SCHEDULE\tTRIAGE SCHEDULE\tMODE\tREPOSITORIES\n")
+			for _, e := range entries {
+				repos := "-"
+				if len(e.Repositories) > 0 {
+					repos = fmt.Sprintf("%v", e.Repositories)
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+					e.Name, e.BackupSchedule, e.TriageSchedule, e.Mode, repos)
+			}
+			w.Flush()
+		} else {
+			printer.PrintResult(p, &model.GetPoliciesResult{Policies: entries}, nil, nil)
+		}
 		return nil
 	},
 }
@@ -148,6 +186,11 @@ var getRepositoriesCmd = &cobra.Command{
 	Short:   "List BackupRepository resources",
 	Aliases: []string{"repos"},
 	RunE: func(cmd *cobra.Command, args []string) error {
+		p, err := InitPrinter("get-repositories")
+		if err != nil {
+			return err
+		}
+
 		if err := initGetClients(); err != nil {
 			return err
 		}
@@ -157,14 +200,29 @@ var getRepositoriesCmd = &cobra.Command{
 			return err
 		}
 
-		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintf(w, "NAME\tREPOSITORY\tREADY\tSNAPSHOTS\tTOTAL SIZE\tDEDUP SIZE\n")
+		var entries []model.RepositoryEntry
 		for _, r := range repos {
-			fmt.Fprintf(w, "%s\t%s\t%v\t%d\t%s\t%s\n",
-				r.Name, r.Spec.Restic.Repository, r.Status.Ready,
-				r.Status.SnapshotCount, r.Status.TotalSize, r.Status.DeduplicatedSize)
+			entries = append(entries, model.RepositoryEntry{
+				Name:             r.Name,
+				Repository:       r.Spec.Restic.Repository,
+				Ready:            r.Status.Ready,
+				SnapshotCount:    r.Status.SnapshotCount,
+				TotalSize:        r.Status.TotalSize,
+				DeduplicatedSize: r.Status.DeduplicatedSize,
+			})
 		}
-		w.Flush()
+
+		if p.IsHuman() {
+			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintf(w, "NAME\tREPOSITORY\tREADY\tSNAPSHOTS\tTOTAL SIZE\tDEDUP SIZE\n")
+			for _, e := range entries {
+				fmt.Fprintf(w, "%s\t%s\t%v\t%d\t%s\t%s\n",
+					e.Name, e.Repository, e.Ready, e.SnapshotCount, e.TotalSize, e.DeduplicatedSize)
+			}
+			w.Flush()
+		} else {
+			printer.PrintResult(p, &model.GetRepositoriesResult{Repositories: entries}, nil, nil)
+		}
 		return nil
 	},
 }
@@ -175,24 +233,23 @@ var getStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show triage status of managed database clusters",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		p, err := InitPrinter("get-status")
+		if err != nil {
+			return err
+		}
+
 		if err := initGetClients(); err != nil {
 			return err
 		}
 
-		type dbStatus struct {
-			engine, namespace, name string
-			managed, triageResult   string
-			lastTriage, lastBackup  string
-		}
-
-		var results []dbStatus
+		var entries []model.ClusterStatusEntry
 		c := k8s.GetClients()
 
 		cnpgList, err := c.Dynamic.Resource(k8s.CNPGClusterGVR).Namespace(Cfg.Namespace).List(cmd.Context(), k8s.ListOptions())
 		if err == nil {
 			for _, obj := range cnpgList.Items {
-				if s := extractStatus(&obj, "cnpg"); s != nil {
-					results = append(results, *s)
+				if e := extractStatus(&obj, "cnpg"); e != nil {
+					entries = append(entries, *e)
 				}
 			}
 		}
@@ -200,28 +257,28 @@ var getStatusCmd = &cobra.Command{
 		mariaList, err := c.Dynamic.Resource(k8s.MariaDBGVR).Namespace(Cfg.Namespace).List(cmd.Context(), k8s.ListOptions())
 		if err == nil {
 			for _, obj := range mariaList.Items {
-				if s := extractStatus(&obj, "galera"); s != nil {
-					results = append(results, *s)
+				if e := extractStatus(&obj, "galera"); e != nil {
+					entries = append(entries, *e)
 				}
 			}
 		}
 
-		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintf(w, "ENGINE\tNAMESPACE\tCLUSTER\tMANAGED\tSTATUS\tLAST TRIAGE\tLAST BACKUP\n")
-		for _, r := range results {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-				r.engine, r.namespace, r.name, r.managed, r.triageResult, r.lastTriage, r.lastBackup)
+		if p.IsHuman() {
+			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintf(w, "ENGINE\tNAMESPACE\tCLUSTER\tMANAGED\tSTATUS\tLAST TRIAGE\tLAST BACKUP\n")
+			for _, e := range entries {
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+					e.Engine, e.Namespace, e.Name, e.Managed, e.TriageResult, e.LastTriage, e.LastBackup)
+			}
+			w.Flush()
+		} else {
+			printer.PrintResult(p, &model.GetStatusResult{Clusters: entries}, nil, nil)
 		}
-		w.Flush()
 		return nil
 	},
 }
 
-func extractStatus(obj *unstructured.Unstructured, eng string) *struct {
-	engine, namespace, name string
-	managed, triageResult   string
-	lastTriage, lastBackup  string
-} {
+func extractStatus(obj *unstructured.Unstructured, eng string) *model.ClusterStatusEntry {
 	annotations := obj.GetAnnotations()
 	if annotations == nil {
 		return nil
@@ -249,11 +306,11 @@ func extractStatus(obj *unstructured.Unstructured, eng string) *struct {
 		lastBackup = "-"
 	}
 
-	return &struct {
-		engine, namespace, name string
-		managed, triageResult   string
-		lastTriage, lastBackup  string
-	}{eng, obj.GetNamespace(), obj.GetName(), managed, triageResult, lastTriage, lastBackup}
+	return &model.ClusterStatusEntry{
+		Engine: eng, Namespace: obj.GetNamespace(), Name: obj.GetName(),
+		Managed: managed, TriageResult: triageResult,
+		LastTriage: lastTriage, LastBackup: lastBackup,
+	}
 }
 
 // --- helpers ---

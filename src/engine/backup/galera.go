@@ -1,4 +1,4 @@
-package galera
+package backup
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/provider"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/k8s"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
@@ -14,18 +15,37 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// DumpFilename is the virtual filename used in restic snapshots for mysqldump output.
-const DumpFilename = "mysqldump.sql"
+func init() {
+	Register("galera", func(p provider.EngineProvider) (Backer, error) {
+		gp, ok := p.(*provider.GaleraProvider)
+		if !ok {
+			return nil, fmt.Errorf("galera backup: expected *provider.GaleraProvider, got %T", p)
+		}
+		return &galeraBackup{p: gp}, nil
+	})
+}
 
-func (e *Engine) Backup(ctx context.Context) (*model.BackupResult, error) {
-	ns := e.cfg.Namespace
-	stdinFilename := fmt.Sprintf("%s/%s/%s", ns, e.cfg.ClusterName, DumpFilename)
-	return e.BackupDump(ctx, "backup", "", stdinFilename, time.Now(), nil)
+// DumpFilename is the virtual filename used in restic snapshots for mysqldump output.
+const galeraDumpFilename = "mysqldump.sql"
+
+// galeraBackup implements Backer for MariaDB Galera clusters.
+type galeraBackup struct {
+	p *provider.GaleraProvider
+}
+
+func (b *galeraBackup) Name() string { return "galera" }
+
+func (b *galeraBackup) Backup(ctx context.Context) (*model.BackupResult, error) {
+	cfg := b.p.Config()
+	ns := cfg.Namespace
+	stdinFilename := fmt.Sprintf("%s/%s/%s", ns, cfg.ClusterName, galeraDumpFilename)
+	return b.BackupDump(ctx, "backup", "", stdinFilename, time.Now(), nil)
 }
 
 // newResticClient creates a restic client from the current config.
-func (e *Engine) newResticClient() *restic.Client {
-	return restic.NewClient(e.cfg.BackupsPath, e.cfg.ResticPassword)
+func (b *galeraBackup) newResticClient() *restic.Client {
+	cfg := b.p.Config()
+	return restic.NewClient(cfg.BackupsPath, cfg.ResticPassword)
 }
 
 // BackupDump streams mysqldump from a donor pod through restic backup --stdin.
@@ -34,14 +54,15 @@ func (e *Engine) newResticClient() *restic.Client {
 // stdinFilename is the virtual path in the snapshot.
 // jobTime is set as the restic snapshot timestamp via --time.
 // extraTags are merged into the snapshot tags (e.g., job=<id> for diverged grouping).
-func (e *Engine) BackupDump(ctx context.Context, backupType, donor, stdinFilename string, jobTime time.Time, extraTags map[string]string) (*model.BackupResult, error) {
+func (b *galeraBackup) BackupDump(ctx context.Context, backupType, donor, stdinFilename string, jobTime time.Time, extraTags map[string]string) (*model.BackupResult, error) {
 	start := time.Now()
-	ns := e.cfg.Namespace
+	cfg := b.p.Config()
+	ns := cfg.Namespace
 
 	// Find donor if not specified
 	if donor == "" {
 		var err error
-		donor, err = e.findHealthyPod(ctx)
+		donor, err = b.findHealthyPod(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -50,7 +71,7 @@ func (e *Engine) BackupDump(ctx context.Context, backupType, donor, stdinFilenam
 	output.Section("Dump Backup")
 	output.Field("Type", backupType)
 	output.Field("Donor", donor)
-	output.Field("Repository", e.cfg.BackupsPath)
+	output.Field("Repository", cfg.BackupsPath)
 
 	// Verify donor is running and ready
 	c := k8s.GetClients()
@@ -63,7 +84,7 @@ func (e *Engine) BackupDump(ctx context.Context, backupType, donor, stdinFilenam
 	}
 
 	// Initialize restic repo (idempotent)
-	rc := e.newResticClient()
+	rc := b.newResticClient()
 	if err := rc.Init(ctx); err != nil {
 		return nil, fmt.Errorf("failed to initialize restic repository: %w", err)
 	}
@@ -71,7 +92,7 @@ func (e *Engine) BackupDump(ctx context.Context, backupType, donor, stdinFilenam
 	// Stream backup using MYSQL_PWD env var (security: not in command args)
 	// MariaDB 12+ renamed mysqldump to mariadb-dump; try both with fallback
 	cmd := []string{"sh", "-c",
-		"export MYSQL_PWD='" + k8s.ShellEscape(e.rootPassword) + "'; " +
+		"export MYSQL_PWD='" + k8s.ShellEscape(b.p.RootPassword()) + "'; " +
 			"DUMPCMD=$(command -v mariadb-dump 2>/dev/null || command -v mysqldump 2>/dev/null) && " +
 			"$DUMPCMD -u root --all-databases --single-transaction --routines --triggers --events"}
 
@@ -80,7 +101,7 @@ func (e *Engine) BackupDump(ctx context.Context, backupType, donor, stdinFilenam
 
 	tags := map[string]string{
 		"engine":    "galera",
-		"cluster":   e.cfg.ClusterName,
+		"cluster":   cfg.ClusterName,
 		"namespace": ns,
 		"type":      backupType,
 	}
@@ -102,10 +123,10 @@ func (e *Engine) BackupDump(ctx context.Context, backupType, donor, stdinFilenam
 	}
 
 	result := &model.BackupResult{
-		Engine:     e.Name(),
-		Cluster:    model.ObjectRef{Namespace: ns, Name: e.cfg.ClusterName},
+		Engine:     b.Name(),
+		Cluster:    model.ObjectRef{Namespace: ns, Name: cfg.ClusterName},
 		SnapshotID: summary.SnapshotID,
-		Repository: e.cfg.BackupsPath,
+		Repository: cfg.BackupsPath,
 		Size:       summary.TotalSize,
 		Duration:   time.Since(start),
 		Tags:       tags,
@@ -120,10 +141,11 @@ func (e *Engine) BackupDump(ctx context.Context, backupType, donor, stdinFilenam
 }
 
 // findHealthyPod returns the name of a healthy running MariaDB pod.
-func (e *Engine) findHealthyPod(ctx context.Context) (string, error) {
+func (b *galeraBackup) findHealthyPod(ctx context.Context) (string, error) {
+	cfg := b.p.Config()
 	c := k8s.GetClients()
-	pods, err := c.Clientset.CoreV1().Pods(e.cfg.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "app.kubernetes.io/instance=" + e.cfg.ClusterName,
+	pods, err := c.Clientset.CoreV1().Pods(cfg.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app.kubernetes.io/instance=" + cfg.ClusterName,
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to list pods: %w", err)
@@ -135,5 +157,5 @@ func (e *Engine) findHealthyPod(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("no healthy running pods found for %s in %s", e.cfg.ClusterName, e.cfg.Namespace)
+	return "", fmt.Errorf("no healthy running pods found for %s in %s", cfg.ClusterName, cfg.Namespace)
 }

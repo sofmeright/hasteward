@@ -1,4 +1,4 @@
-package cnpg
+package backup
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/provider"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/k8s"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
@@ -17,22 +18,41 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-// DumpFilename is the virtual filename used in restic snapshots for pg_dumpall output.
-const DumpFilename = "pgdumpall.sql"
+func init() {
+	Register("cnpg", func(p provider.EngineProvider) (Backer, error) {
+		cp, ok := p.(*provider.CNPGProvider)
+		if !ok {
+			return nil, fmt.Errorf("cnpg backup: expected *provider.CNPGProvider, got %T", p)
+		}
+		return &cnpgBackup{p: cp}, nil
+	})
+}
 
-func (e *Engine) Backup(ctx context.Context) (*model.BackupResult, error) {
-	if e.cfg.BackupMethod == "native" {
-		return e.backupNative(ctx)
+// cnpgDumpFilename is the virtual filename used in restic snapshots for pg_dumpall output.
+const cnpgDumpFilename = "pgdumpall.sql"
+
+// cnpgBackup implements Backer for CloudNativePG PostgreSQL clusters.
+type cnpgBackup struct {
+	p *provider.CNPGProvider
+}
+
+func (b *cnpgBackup) Name() string { return "cnpg" }
+
+func (b *cnpgBackup) Backup(ctx context.Context) (*model.BackupResult, error) {
+	cfg := b.p.Config()
+	if cfg.BackupMethod == "native" {
+		return b.backupNative(ctx)
 	}
-	primary := k8s.GetNestedString(e.cluster, "status", "currentPrimary")
-	ns := e.cfg.Namespace
-	stdinFilename := fmt.Sprintf("%s/%s/%s", ns, e.cfg.ClusterName, DumpFilename)
-	return e.BackupDump(ctx, "backup", primary, stdinFilename, time.Now(), nil)
+	primary := k8s.GetNestedString(b.p.Cluster(), "status", "currentPrimary")
+	ns := cfg.Namespace
+	stdinFilename := fmt.Sprintf("%s/%s/%s", ns, cfg.ClusterName, cnpgDumpFilename)
+	return b.BackupDump(ctx, "backup", primary, stdinFilename, time.Now(), nil)
 }
 
 // newResticClient creates a restic client from the current config.
-func (e *Engine) newResticClient() *restic.Client {
-	return restic.NewClient(e.cfg.BackupsPath, e.cfg.ResticPassword)
+func (b *cnpgBackup) newResticClient() *restic.Client {
+	cfg := b.p.Config()
+	return restic.NewClient(cfg.BackupsPath, cfg.ResticPassword)
 }
 
 // BackupDump streams pg_dumpall from a donor pod through restic backup --stdin.
@@ -40,14 +60,15 @@ func (e *Engine) newResticClient() *restic.Client {
 // donor is the pod to dump from. stdinFilename is the virtual path in the snapshot.
 // jobTime is set as the restic snapshot timestamp via --time.
 // extraTags are merged into the snapshot tags (e.g., job=<id> for diverged grouping).
-func (e *Engine) BackupDump(ctx context.Context, backupType, donor, stdinFilename string, jobTime time.Time, extraTags map[string]string) (*model.BackupResult, error) {
+func (b *cnpgBackup) BackupDump(ctx context.Context, backupType, donor, stdinFilename string, jobTime time.Time, extraTags map[string]string) (*model.BackupResult, error) {
 	start := time.Now()
-	ns := e.cfg.Namespace
+	cfg := b.p.Config()
+	ns := cfg.Namespace
 
 	output.Section("Dump Backup")
 	output.Field("Type", backupType)
 	output.Field("Donor", donor)
-	output.Field("Repository", e.cfg.BackupsPath)
+	output.Field("Repository", cfg.BackupsPath)
 
 	// Verify donor is running and ready
 	c := k8s.GetClients()
@@ -60,7 +81,7 @@ func (e *Engine) BackupDump(ctx context.Context, backupType, donor, stdinFilenam
 	}
 
 	// Initialize restic repo (idempotent)
-	rc := e.newResticClient()
+	rc := b.newResticClient()
 	if err := rc.Init(ctx); err != nil {
 		return nil, fmt.Errorf("failed to initialize restic repository: %w", err)
 	}
@@ -71,7 +92,7 @@ func (e *Engine) BackupDump(ctx context.Context, backupType, donor, stdinFilenam
 
 	tags := map[string]string{
 		"engine":    "cnpg",
-		"cluster":   e.cfg.ClusterName,
+		"cluster":   cfg.ClusterName,
 		"namespace": ns,
 		"type":      backupType,
 	}
@@ -93,10 +114,10 @@ func (e *Engine) BackupDump(ctx context.Context, backupType, donor, stdinFilenam
 	}
 
 	result := &model.BackupResult{
-		Engine:     e.Name(),
-		Cluster:    model.ObjectRef{Namespace: ns, Name: e.cfg.ClusterName},
+		Engine:     b.Name(),
+		Cluster:    model.ObjectRef{Namespace: ns, Name: cfg.ClusterName},
 		SnapshotID: summary.SnapshotID,
-		Repository: e.cfg.BackupsPath,
+		Repository: cfg.BackupsPath,
 		Size:       summary.TotalSize,
 		Duration:   time.Since(start),
 		Tags:       tags,
@@ -110,23 +131,24 @@ func (e *Engine) BackupDump(ctx context.Context, backupType, donor, stdinFilenam
 	return result, nil
 }
 
-func (e *Engine) backupNative(ctx context.Context) (*model.BackupResult, error) {
+func (b *cnpgBackup) backupNative(ctx context.Context) (*model.BackupResult, error) {
 	start := time.Now()
+	cfg := b.p.Config()
 
 	// Verify barmanObjectStore is configured
-	backup := k8s.GetNestedMap(e.cluster, "spec", "backup")
+	backup := k8s.GetNestedMap(b.p.Cluster(), "spec", "backup")
 	if backup == nil {
-		return nil, fmt.Errorf("barmanObjectStore not configured on cluster '%s'. Use --method dump or configure S3 backup", e.cfg.ClusterName)
+		return nil, fmt.Errorf("barmanObjectStore not configured on cluster '%s'. Use --method dump or configure S3 backup", cfg.ClusterName)
 	}
 	if _, ok := backup["barmanObjectStore"]; !ok {
-		return nil, fmt.Errorf("barmanObjectStore not configured on cluster '%s'", e.cfg.ClusterName)
+		return nil, fmt.Errorf("barmanObjectStore not configured on cluster '%s'", cfg.ClusterName)
 	}
 
-	backupName := fmt.Sprintf("%s-%s", e.cfg.ClusterName, strings.ToLower(time.Now().Format("20060102t150405")))
+	backupName := fmt.Sprintf("%s-%s", cfg.ClusterName, strings.ToLower(time.Now().Format("20060102t150405")))
 
 	output.Section("Native S3 Backup")
 	output.Field("Backup CR", backupName)
-	output.Field("Cluster", e.cfg.ClusterName)
+	output.Field("Cluster", cfg.ClusterName)
 	output.Field("Method", "barmanObjectStore")
 
 	// Create Backup CRD
@@ -137,11 +159,11 @@ func (e *Engine) backupNative(ctx context.Context) (*model.BackupResult, error) 
 			"kind":       "Backup",
 			"metadata": map[string]interface{}{
 				"name":      backupName,
-				"namespace": e.cfg.Namespace,
+				"namespace": cfg.Namespace,
 			},
 			"spec": map[string]interface{}{
 				"cluster": map[string]interface{}{
-					"name": e.cfg.ClusterName,
+					"name": cfg.ClusterName,
 				},
 				"method": "barmanObjectStore",
 			},
@@ -151,7 +173,7 @@ func (e *Engine) backupNative(ctx context.Context) (*model.BackupResult, error) 
 	gvr := schema.GroupVersionResource{
 		Group: "postgresql.cnpg.io", Version: "v1", Resource: "backups",
 	}
-	_, err := c.Dynamic.Resource(gvr).Namespace(e.cfg.Namespace).Create(ctx, backupObj, metav1.CreateOptions{})
+	_, err := c.Dynamic.Resource(gvr).Namespace(cfg.Namespace).Create(ctx, backupObj, metav1.CreateOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Backup CRD: %w", err)
 	}
@@ -160,7 +182,7 @@ func (e *Engine) backupNative(ctx context.Context) (*model.BackupResult, error) 
 	common.InfoLog("Waiting for backup %s to complete...", backupName)
 	for i := 0; i < 120; i++ {
 		time.Sleep(10 * time.Second)
-		obj, err := c.Dynamic.Resource(gvr).Namespace(e.cfg.Namespace).Get(ctx, backupName, metav1.GetOptions{})
+		obj, err := c.Dynamic.Resource(gvr).Namespace(cfg.Namespace).Get(ctx, backupName, metav1.GetOptions{})
 		if err != nil {
 			continue
 		}
@@ -173,14 +195,14 @@ func (e *Engine) backupNative(ctx context.Context) (*model.BackupResult, error) 
 			output.Field("Backup CR", backupName)
 			output.Success("Native backup completed")
 			return &model.BackupResult{
-				Engine:     e.Name(),
-				Cluster:    model.ObjectRef{Namespace: e.cfg.Namespace, Name: e.cfg.ClusterName},
+				Engine:     b.Name(),
+				Cluster:    model.ObjectRef{Namespace: cfg.Namespace, Name: cfg.ClusterName},
 				SnapshotID: backupName,
 				Repository: dest,
 				Duration:   time.Since(start),
 				Tags: map[string]string{
 					"engine":  "cnpg",
-					"cluster": e.cfg.ClusterName,
+					"cluster": cfg.ClusterName,
 					"method":  "native",
 				},
 			}, nil

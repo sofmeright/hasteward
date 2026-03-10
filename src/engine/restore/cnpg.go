@@ -1,4 +1,4 @@
-package cnpg
+package restore
 
 import (
 	"context"
@@ -11,48 +11,71 @@ import (
 	"time"
 
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/provider"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/k8s"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/restic"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
 
-func (e *Engine) Restore(ctx context.Context) (*model.RestoreResult, error) {
-	if e.cfg.BackupMethod == "native" {
-		return nil, fmt.Errorf("native S3 restore (PITR via bootstrap.recovery) is not yet implemented. Use --method dump")
-	}
-	return e.restoreDump(ctx)
+// DumpFilenameCNPG is the virtual filename used in restic snapshots for pg_dumpall output.
+const DumpFilenameCNPG = "pgdumpall.sql"
+
+func init() {
+	Register("cnpg", func(ep provider.EngineProvider) (Restorer, error) {
+		p, ok := ep.(*provider.CNPGProvider)
+		if !ok {
+			return nil, fmt.Errorf("restore/cnpg: expected *provider.CNPGProvider, got %T", ep)
+		}
+		return &cnpgRestore{p: p}, nil
+	})
 }
 
-func (e *Engine) restoreDump(ctx context.Context) (*model.RestoreResult, error) {
-	start := time.Now()
-	ns := e.cfg.Namespace
-	primary := k8s.GetNestedString(e.cluster, "status", "currentPrimary")
+type cnpgRestore struct {
+	p *provider.CNPGProvider
+}
 
-	snapshotID := e.cfg.Snapshot
+func (r *cnpgRestore) Name() string { return r.p.Name() }
+
+func (r *cnpgRestore) Restore(ctx context.Context) (*model.RestoreResult, error) {
+	cfg := r.p.Config()
+	if cfg.BackupMethod == "native" {
+		return nil, fmt.Errorf("native S3 restore (PITR via bootstrap.recovery) is not yet implemented. Use --method dump")
+	}
+	return r.restoreDump(ctx)
+}
+
+func (r *cnpgRestore) restoreDump(ctx context.Context) (*model.RestoreResult, error) {
+	start := time.Now()
+	cfg := r.p.Config()
+	ns := cfg.Namespace
+	primary := k8s.GetNestedString(r.p.Cluster(), "status", "currentPrimary")
+
+	snapshotID := cfg.Snapshot
 	if snapshotID == "" {
 		snapshotID = "latest"
 	}
 
-	rc := e.newResticClient()
+	rc := restic.NewClient(cfg.BackupsPath, cfg.ResticPassword)
 	// Diverged snapshots use ordinal-prefixed filename
-	dumpFile := DumpFilename
-	if e.cfg.InstanceNumber != nil {
-		dumpFile = strconv.Itoa(*e.cfg.InstanceNumber) + "-" + dumpFile
+	dumpFile := DumpFilenameCNPG
+	if cfg.InstanceNumber != nil {
+		dumpFile = strconv.Itoa(*cfg.InstanceNumber) + "-" + dumpFile
 	}
-	stdinFilename := fmt.Sprintf("%s/%s/%s", ns, e.cfg.ClusterName, dumpFile)
+	stdinFilename := fmt.Sprintf("%s/%s/%s", ns, cfg.ClusterName, dumpFile)
 	filterTags := map[string]string{
 		"engine":    "cnpg",
-		"cluster":   e.cfg.ClusterName,
+		"cluster":   cfg.ClusterName,
 		"namespace": ns,
 	}
 
 	output.Section("Dump Restore")
 	output.Field("Snapshot", snapshotID)
 	output.Field("Primary", primary)
-	output.Field("Repository", e.cfg.BackupsPath)
+	output.Field("Repository", cfg.BackupsPath)
 
 	// Verify primary is running and ready
 	c := k8s.GetClients()
@@ -66,7 +89,7 @@ func (e *Engine) restoreDump(ctx context.Context) (*model.RestoreResult, error) 
 
 	// Get replica instance names (non-primary)
 	var replicas []string
-	if names := k8s.GetNestedSlice(e.cluster, "status", "instanceNames"); names != nil {
+	if names := k8s.GetNestedSlice(r.p.Cluster(), "status", "instanceNames"); names != nil {
 		for _, n := range names {
 			if s, ok := n.(string); ok && s != primary {
 				replicas = append(replicas, s)
@@ -80,13 +103,13 @@ func (e *Engine) restoreDump(ctx context.Context) (*model.RestoreResult, error) 
 		fencedJSON, _ := json.Marshal(replicas)
 		patch := fmt.Sprintf(`{"metadata":{"annotations":{"cnpg.io/fencedInstances":%q}}}`, string(fencedJSON))
 		_, err := c.Dynamic.Resource(k8s.CNPGClusterGVR).Namespace(ns).Patch(
-			ctx, e.cfg.ClusterName, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
+			ctx, cfg.ClusterName, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
 		if err != nil {
 			return nil, fmt.Errorf("failed to fence replicas: %w", err)
 		}
 	}
 
-	// Set up pipe: restic dump → pipe → psql stdin
+	// Set up pipe: restic dump -> pipe -> psql stdin
 	pr, pw := io.Pipe()
 
 	var resticErr error
@@ -107,11 +130,11 @@ func (e *Engine) restoreDump(ctx context.Context) (*model.RestoreResult, error) 
 	<-done
 
 	if err != nil {
-		e.unfenceAll(ctx, ns)
+		r.unfenceAll(ctx, ns)
 		return nil, fmt.Errorf("restore stream failed: %w", err)
 	}
 	if resticErr != nil {
-		e.unfenceAll(ctx, ns)
+		r.unfenceAll(ctx, ns)
 		return nil, fmt.Errorf("restic dump failed: %w", resticErr)
 	}
 
@@ -119,7 +142,7 @@ func (e *Engine) restoreDump(ctx context.Context) (*model.RestoreResult, error) 
 
 	// Unfence replicas
 	if len(replicas) > 0 {
-		e.unfenceAll(ctx, ns)
+		r.unfenceAll(ctx, ns)
 
 		// Delete replica pods to force clean re-sync
 		for _, replica := range replicas {
@@ -132,19 +155,23 @@ func (e *Engine) restoreDump(ctx context.Context) (*model.RestoreResult, error) 
 
 	output.Success("Restore complete")
 	return &model.RestoreResult{
-		Engine:     e.Name(),
-		Cluster:    model.ObjectRef{Namespace: ns, Name: e.cfg.ClusterName},
+		Engine:     r.p.Name(),
+		Cluster:    model.ObjectRef{Namespace: ns, Name: cfg.ClusterName},
 		SnapshotID: snapshotID,
 		Duration:   time.Since(start),
 	}, nil
 }
 
-func (e *Engine) unfenceAll(ctx context.Context, ns string) {
+func (r *cnpgRestore) unfenceAll(ctx context.Context, ns string) {
+	cfg := r.p.Config()
 	c := k8s.GetClients()
 	patch := `{"metadata":{"annotations":{"cnpg.io/fencedInstances":"[]"}}}`
 	_, err := c.Dynamic.Resource(k8s.CNPGClusterGVR).Namespace(ns).Patch(
-		ctx, e.cfg.ClusterName, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
+		ctx, cfg.ClusterName, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
 	if err != nil {
 		common.WarnLog("Failed to unfence replicas: %v", err)
 	}
 }
+
+// ptr returns a pointer to the given value.
+func ptr[T any](v T) *T { return &v }

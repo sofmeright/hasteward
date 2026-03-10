@@ -1,4 +1,4 @@
-package galera
+package triage
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/provider"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/k8s"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
@@ -15,6 +16,26 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+func init() {
+	Register("galera", func(ep provider.EngineProvider) (Triager, error) {
+		p, ok := ep.(*provider.GaleraProvider)
+		if !ok {
+			return nil, fmt.Errorf("galera triager requires *provider.GaleraProvider, got %T", ep)
+		}
+		return &galeraTriage{p: p}, nil
+	})
+}
+
+// galeraTriage implements Triager for Galera (MariaDB) clusters.
+type galeraTriage struct {
+	p    *provider.GaleraProvider
+	data *galeraTriageData
+}
+
+func (t *galeraTriage) Name() string { return "galera" }
+
+// --- Types ---
 
 // grastate holds parsed grastate.dat fields for one instance.
 type grastate struct {
@@ -28,15 +49,15 @@ type grastate struct {
 
 // wsrepStatus holds parsed wsrep GLOBAL_STATUS variables for one instance.
 type wsrepStatus struct {
-	LocalState         int
-	LocalStateComment  string
-	ClusterStatus      string
-	ClusterSize        string
-	Connected          string
-	Ready              string
-	ClusterStateUUID   string
-	LastCommitted      int64
-	FlowControlPaused  string
+	LocalState        int
+	LocalStateComment string
+	ClusterStatus     string
+	ClusterSize       string
+	Connected         string
+	Ready             string
+	ClusterStateUUID  string
+	LastCommitted     int64
+	FlowControlPaused string
 }
 
 // effectiveSeqno holds the best seqno from multiple sources for one instance.
@@ -45,22 +66,7 @@ type effectiveSeqno struct {
 	Source string
 }
 
-func (e *Engine) Triage(ctx context.Context) (*model.TriageResult, error) {
-	displayClusterStatus(e)
-
-	data, err := e.triageCollect(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("triage collect failed: %w", err)
-	}
-
-	result := e.triageAnalyze(data)
-	e.triageDisplay(data, result)
-
-	return result, nil
-}
-
-// --- Collection ---
-
+// galeraTriageData holds all data collected during the triage collection phase.
 type galeraTriageData struct {
 	expectedNodes   []string
 	runningPods     []corev1.Pod
@@ -80,9 +86,28 @@ type galeraTriageData struct {
 	bestSeqnoValue  int64
 }
 
-func (e *Engine) triageCollect(ctx context.Context) (*galeraTriageData, error) {
+// galeraProbeTarget identifies a node whose PVC should be probed.
+type galeraProbeTarget struct {
+	Name string
+	Node string
+}
+
+// --- Collect ---
+
+func (t *galeraTriage) Collect(ctx context.Context) error {
+	t.displayClusterStatus()
+
+	data, err := t.triageCollect(ctx)
+	if err != nil {
+		return fmt.Errorf("triage collect failed: %w", err)
+	}
+	t.data = data
+	return nil
+}
+
+func (t *galeraTriage) triageCollect(ctx context.Context) (*galeraTriageData, error) {
 	c := k8s.GetClients()
-	ns := e.cfg.Namespace
+	ns := t.p.Config().Namespace
 	data := &galeraTriageData{
 		wsrepMap:        make(map[string]*wsrepStatus),
 		effectiveSeqnos: make(map[string]*effectiveSeqno),
@@ -93,13 +118,13 @@ func (e *Engine) triageCollect(ctx context.Context) (*galeraTriageData, error) {
 	}
 
 	// Build expected node list
-	for i := int64(0); i < e.replicas; i++ {
-		data.expectedNodes = append(data.expectedNodes, fmt.Sprintf("%s-%d", e.cfg.ClusterName, i))
+	for i := int64(0); i < t.p.Replicas(); i++ {
+		data.expectedNodes = append(data.expectedNodes, fmt.Sprintf("%s-%d", t.p.Config().ClusterName, i))
 	}
 
 	// Get all MariaDB pods
 	podList, err := c.Clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("app.kubernetes.io/instance=%s", e.cfg.ClusterName),
+		LabelSelector: fmt.Sprintf("app.kubernetes.io/instance=%s", t.p.Config().ClusterName),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list pods: %w", err)
@@ -209,18 +234,18 @@ func (e *Engine) triageCollect(ctx context.Context) (*galeraTriageData, error) {
 		podNodes[pod.Name] = pod.Spec.NodeName
 	}
 
-	var probeNodes []probeTarget
+	var probeNodes []galeraProbeTarget
 	for _, name := range data.expectedNodes {
 		if !haveData[name] && data.pvcStates[name]["storage"] == "Bound" {
-			probeNodes = append(probeNodes, probeTarget{Name: name, Node: podNodes[name]})
+			probeNodes = append(probeNodes, galeraProbeTarget{Name: name, Node: podNodes[name]})
 		}
 	}
 
 	if len(probeNodes) > 0 {
 		common.InfoLog("Probing PVC data for stranded nodes: %s",
-			joinProbeNames(probeNodes))
+			joinGaleraProbeNames(probeNodes))
 		sa := k8s.ServiceAccountFromPods(data.runningPods)
-		probeResults := e.runPVCProbes(ctx, probeNodes, ns, sa)
+		probeResults := t.runPVCProbes(ctx, probeNodes, ns, sa)
 		for name, gs := range probeResults {
 			allGrastate = append(allGrastate, gs)
 			haveData[name] = true
@@ -250,7 +275,7 @@ func (e *Engine) triageCollect(ctx context.Context) (*galeraTriageData, error) {
 		}
 		// Use MYSQL_PWD env var to avoid password in process args
 		result, err := k8s.ExecCommandWithEnv(ctx, pod.Name, ns, "mariadb",
-			map[string]string{"MYSQL_PWD": e.rootPassword},
+			map[string]string{"MYSQL_PWD": t.p.RootPassword()},
 			[]string{"mariadb", "-u", "root", "--batch", "--skip-column-names", "-e",
 				"SELECT VARIABLE_NAME, VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS " +
 					"WHERE VARIABLE_NAME IN (" +
@@ -293,8 +318,8 @@ func (e *Engine) triageCollect(ctx context.Context) (*galeraTriageData, error) {
 
 	// --- Effective seqno ---
 	output.Section("Effective Seqno (data freshness)")
-	crRecovered := getRecoveryMap(e.galeraRecovery, "recovered")
-	crState := getRecoveryMap(e.galeraRecovery, "state")
+	crRecovered := getRecoveryMap(t.p.GaleraRecovery(), "recovered")
+	crState := getRecoveryMap(t.p.GaleraRecovery(), "state")
 
 	for _, gs := range data.grastateData {
 		ws := data.wsrepMap[gs.Pod]
@@ -368,13 +393,13 @@ func (e *Engine) triageCollect(ctx context.Context) (*galeraTriageData, error) {
 	return data, nil
 }
 
-func (e *Engine) runPVCProbes(ctx context.Context, targets []probeTarget, ns, sa string) map[string]grastate {
+func (t *galeraTriage) runPVCProbes(ctx context.Context, targets []galeraProbeTarget, ns, sa string) map[string]grastate {
 	c := k8s.GetClients()
 	results := make(map[string]grastate)
 	uid := int64(0)
 
-	for _, t := range targets {
-		probeName := t.Name + "-triage-probe"
+	for _, tgt := range targets {
+		probeName := tgt.Name + "-triage-probe"
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: probeName, Namespace: ns,
@@ -395,18 +420,18 @@ func (e *Engine) runPVCProbes(ctx context.Context, targets []probeTarget, ns, sa
 					Name: "storage",
 					VolumeSource: corev1.VolumeSource{
 						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-							ClaimName: "storage-" + t.Name,
+							ClaimName: "storage-" + tgt.Name,
 						},
 					},
 				}},
 			},
 		}
-		if t.Node != "" {
-			pod.Spec.NodeSelector = map[string]string{"kubernetes.io/hostname": t.Node}
+		if tgt.Node != "" {
+			pod.Spec.NodeSelector = map[string]string{"kubernetes.io/hostname": tgt.Node}
 		}
 
 		if _, err := c.Clientset.CoreV1().Pods(ns).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
-			common.WarnLog("Failed to create probe pod for %s: %v", t.Name, err)
+			common.WarnLog("Failed to create probe pod for %s: %v", tgt.Name, err)
 			continue
 		}
 
@@ -426,7 +451,7 @@ func (e *Engine) runPVCProbes(ctx context.Context, targets []probeTarget, ns, sa
 		logReq := c.Clientset.CoreV1().Pods(ns).GetLogs(probeName, &corev1.PodLogOptions{Container: "probe"})
 		logBytes, err := logReq.DoRaw(ctx)
 		if err == nil && len(logBytes) > 0 {
-			results[t.Name] = parseGrastate(t.Name, "pvc_probe", string(logBytes))
+			results[tgt.Name] = parseGrastate(tgt.Name, "pvc_probe", string(logBytes))
 		}
 
 		// Cleanup
@@ -437,10 +462,15 @@ func (e *Engine) runPVCProbes(ctx context.Context, targets []probeTarget, ns, sa
 	return results
 }
 
-// --- Analysis ---
+// --- Analyze ---
 
-func (e *Engine) triageAnalyze(data *galeraTriageData) *model.TriageResult {
-	comparison := e.crossInstanceComparison(data)
+func (t *galeraTriage) Analyze(_ context.Context) (*model.TriageResult, error) {
+	data := t.data
+	if data == nil {
+		return nil, fmt.Errorf("Analyze called before Collect")
+	}
+
+	comparison := t.crossInstanceComparison(data)
 
 	output.Section("Data Freshness Check")
 	for _, w := range comparison.Warnings {
@@ -457,7 +487,7 @@ func (e *Engine) triageAnalyze(data *galeraTriageData) *model.TriageResult {
 		output.Println()
 	}
 
-	assessments := e.buildAssessments(data, &comparison)
+	assessments := t.buildAssessments(data, &comparison)
 
 	var bestSeqnoAssessment *model.InstanceAssessment
 	for i := range assessments {
@@ -467,22 +497,26 @@ func (e *Engine) triageAnalyze(data *galeraTriageData) *model.TriageResult {
 		}
 	}
 
-	return &model.TriageResult{
-		Engine: e.Name(),
+	result := &model.TriageResult{
+		Engine: t.Name(),
 		Cluster: model.ObjectRef{
-			Namespace: e.cfg.Namespace,
-			Name:      e.cfg.ClusterName,
+			Namespace: t.p.Config().Namespace,
+			Name:      t.p.Config().ClusterName,
 		},
 		Assessments:    assessments,
 		DataComparison: comparison,
 		ReadyCount:     len(data.primaryMembers),
-		TotalCount:     int(e.replicas),
+		TotalCount:     int(t.p.Replicas()),
 		AllNodesDown:   data.allNodesDown,
 		BestSeqnoNode:  bestSeqnoAssessment,
 	}
+
+	t.triageDisplay(data, result)
+
+	return result, nil
 }
 
-func (e *Engine) crossInstanceComparison(data *galeraTriageData) model.DataComparison {
+func (t *galeraTriage) crossInstanceComparison(data *galeraTriageData) model.DataComparison {
 	var warnings, splitBrain []string
 
 	// UUID divergence check
@@ -562,7 +596,7 @@ func (e *Engine) crossInstanceComparison(data *galeraTriageData) model.DataCompa
 	}
 }
 
-func (e *Engine) buildAssessments(data *galeraTriageData, comparison *model.DataComparison) []model.InstanceAssessment {
+func (t *galeraTriage) buildAssessments(data *galeraTriageData, comparison *model.DataComparison) []model.InstanceAssessment {
 	missingSet := setFromSlice(data.missingNodes)
 	crashloopSet := podNameSet(data.crashloopPods)
 	runningSet := podNameSet(data.runningPods)
@@ -610,7 +644,7 @@ func (e *Engine) buildAssessments(data *galeraTriageData, comparison *model.Data
 		parts := strings.Split(gs.Pod, "-")
 		nodeNum := parts[len(parts)-1]
 		healCmd := fmt.Sprintf("hasteward repair -e galera -c %s -n %s --instance %s --backups-path /backups",
-			e.cfg.ClusterName, e.cfg.Namespace, nodeNum)
+			t.p.Config().ClusterName, t.p.Config().Namespace, nodeNum)
 
 		var notes []string
 		var recommendation string
@@ -741,15 +775,15 @@ func (e *Engine) buildAssessments(data *galeraTriageData, comparison *model.Data
 
 // --- Display ---
 
-func displayClusterStatus(e *Engine) {
+func (t *galeraTriage) displayClusterStatus() {
 	output.Section("MariaDB Status")
-	output.Field("Ready", getConditionStatus(e.readyCondition))
-	output.Field("GaleraReady", getConditionStatus(e.galeraCondition))
-	output.Field("Replicas", fmt.Sprintf("%d", e.replicas))
-	output.Field("Image", getMapString(e.mariadbSpec, "image"))
-	output.Field("Suspended", fmt.Sprintf("%v", e.isSuspended))
-	if e.galeraRecovery != nil && len(e.galeraRecovery) > 0 {
-		output.Field("Galera recovery", fmt.Sprintf("%v", e.galeraRecovery))
+	output.Field("Ready", getConditionStatus(t.p.ReadyCondition()))
+	output.Field("GaleraReady", getConditionStatus(t.p.GaleraCondition()))
+	output.Field("Replicas", fmt.Sprintf("%d", t.p.Replicas()))
+	output.Field("Image", getMapString(t.p.Spec(), "image"))
+	output.Field("Suspended", fmt.Sprintf("%v", t.p.IsSuspended()))
+	if t.p.GaleraRecovery() != nil && len(t.p.GaleraRecovery()) > 0 {
+		output.Field("Galera recovery", fmt.Sprintf("%v", t.p.GaleraRecovery()))
 	} else {
 		output.Field("Galera recovery", "none")
 	}
@@ -800,13 +834,13 @@ func displayWsrep(name string, ws *wsrepStatus) {
 	output.Printf("  flow_control_paused: %s\n", ws.FlowControlPaused)
 }
 
-func (e *Engine) triageDisplay(data *galeraTriageData, result *model.TriageResult) {
+func (t *galeraTriage) triageDisplay(data *galeraTriageData, result *model.TriageResult) {
 	output.Banner("TRIAGE SUMMARY")
 
-	output.Printf("Cluster: %s (%s)\n", e.cfg.ClusterName, e.cfg.Namespace)
+	output.Printf("Cluster: %s (%s)\n", t.p.Config().ClusterName, t.p.Config().Namespace)
 	output.Printf("Ready: %s | GaleraReady: %s\n",
-		getConditionStatus(e.readyCondition), getConditionStatus(e.galeraCondition))
-	output.Printf("Replicas: %d\n", e.replicas)
+		getConditionStatus(t.p.ReadyCondition()), getConditionStatus(t.p.GaleraCondition()))
+	output.Printf("Replicas: %d\n", t.p.Replicas())
 	output.Printf("Most advanced node: %s (seqno: %d)\n",
 		result.DataComparison.MostAdvanced, result.DataComparison.MostAdvancedValue)
 	output.Printf("Primary component: %s (best seqno: %d)\n",
@@ -853,7 +887,7 @@ func (e *Engine) triageDisplay(data *galeraTriageData, result *model.TriageResul
 		}
 	}
 	if healCount > 0 {
-		output.SuggestedCommands("galera", e.cfg.ClusterName, e.cfg.Namespace)
+		output.SuggestedCommands("galera", t.p.Config().ClusterName, t.p.Config().Namespace)
 	}
 
 	if data.allNodesDown {
@@ -865,8 +899,8 @@ func (e *Engine) triageDisplay(data *galeraTriageData, result *model.TriageResul
 		output.Println("If stuck, check the MariaDB CR status.galeraRecovery field.")
 		output.Println()
 		output.Println("To manually bootstrap the cluster:")
-		output.Printf("  hasteward bootstrap -e galera -c %s -n %s --dry-run\n", e.cfg.ClusterName, e.cfg.Namespace)
-		output.Printf("  hasteward bootstrap -e galera -c %s -n %s\n", e.cfg.ClusterName, e.cfg.Namespace)
+		output.Printf("  hasteward bootstrap -e galera -c %s -n %s --dry-run\n", t.p.Config().ClusterName, t.p.Config().Namespace)
+		output.Printf("  hasteward bootstrap -e galera -c %s -n %s\n", t.p.Config().ClusterName, t.p.Config().Namespace)
 	}
 }
 
@@ -1032,7 +1066,7 @@ func joinOrNone(s []string) string {
 	return strings.Join(s, ", ")
 }
 
-func joinProbeNames(targets []probeTarget) string {
+func joinGaleraProbeNames(targets []galeraProbeTarget) string {
 	names := make([]string, len(targets))
 	for i, t := range targets {
 		names[i] = t.Name
@@ -1040,8 +1074,5 @@ func joinProbeNames(targets []probeTarget) string {
 	return strings.Join(names, ", ")
 }
 
-// probeTarget identifies a node whose PVC should be probed.
-type probeTarget struct {
-	Name string
-	Node string
-}
+// ptr returns a pointer to the given value.
+func ptr[T any](v T) *T { return &v }

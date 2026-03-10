@@ -1,4 +1,4 @@
-package cnpg
+package triage
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/provider"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/k8s"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
@@ -15,6 +16,26 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+func init() {
+	Register("cnpg", func(ep provider.EngineProvider) (Triager, error) {
+		p, ok := ep.(*provider.CNPGProvider)
+		if !ok {
+			return nil, fmt.Errorf("cnpg triager requires *provider.CNPGProvider, got %T", ep)
+		}
+		return &cnpgTriage{p: p}, nil
+	})
+}
+
+// cnpgTriage implements Triager for CNPG (CloudNativePG PostgreSQL) clusters.
+type cnpgTriage struct {
+	p    *provider.CNPGProvider
+	data *cnpgTriageData
+}
+
+func (t *cnpgTriage) Name() string { return "cnpg" }
+
+// --- Types ---
 
 // controlData holds parsed pg_controldata fields for one instance.
 type controlData struct {
@@ -43,73 +64,72 @@ type replicaInfo struct {
 	ApplicationName string
 }
 
-func (e *Engine) Triage(ctx context.Context) (*model.TriageResult, error) {
-	// Display cluster status
-	displayClusterStatus(e)
-
-	// Collect
-	data, err := e.triageCollect(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("triage collect failed: %w", err)
-	}
-
-	// Analyze
-	result := e.triageAnalyze(data)
-
-	// Display
-	e.triageDisplay(data, result)
-
-	return result, nil
-}
-
-// --- Collection ---
-
-type triageData struct {
-	expectedInstances []string
-	runningPods       []corev1.Pod
-	nonRunningPods    []corev1.Pod
-	missingInstances  []string
-	crashloopPods     []corev1.Pod
-	controlData       []controlData
-	streamingReplicas []string
-	replicationInfo   []replicaInfo
-	diskUsage         map[string]int // pod -> percent used
-	pvcStates         map[string]string
-	danglingPVCs      []string
-	healthyPVCs       []string
-	primaryIsRunning  bool
+// cnpgTriageData holds all data collected during the triage collection phase.
+type cnpgTriageData struct {
+	expectedInstances  []string
+	runningPods        []corev1.Pod
+	nonRunningPods     []corev1.Pod
+	missingInstances   []string
+	crashloopPods      []corev1.Pod
+	controlData        []controlData
+	streamingReplicas  []string
+	replicationInfo    []replicaInfo
+	diskUsage          map[string]int // pod -> percent used
+	pvcStates          map[string]string
+	danglingPVCs       []string
+	healthyPVCs        []string
+	primaryIsRunning   bool
 	primaryControlData *controlData
-	primaryTimeline   string
-	crashReasons      map[string]string
-	walInfo           string
-	slotInfo          []string
+	primaryTimeline    string
+	crashReasons       map[string]string
+	walInfo            string
+	slotInfo           []string
 }
 
-func (e *Engine) triageCollect(ctx context.Context) (*triageData, error) {
+// cnpgProbeTarget identifies an instance whose PVC should be probed.
+type cnpgProbeTarget struct {
+	Name string
+	Node string
+}
+
+// --- Collect ---
+
+func (t *cnpgTriage) Collect(ctx context.Context) error {
+	t.displayClusterStatus()
+
+	data, err := t.triageCollect(ctx)
+	if err != nil {
+		return fmt.Errorf("triage collect failed: %w", err)
+	}
+	t.data = data
+	return nil
+}
+
+func (t *cnpgTriage) triageCollect(ctx context.Context) (*cnpgTriageData, error) {
 	c := k8s.GetClients()
-	ns := e.cfg.Namespace
-	data := &triageData{
+	ns := t.p.Config().Namespace
+	data := &cnpgTriageData{
 		diskUsage:    make(map[string]int),
 		pvcStates:    make(map[string]string),
 		crashReasons: make(map[string]string),
 	}
 
 	// Build expected instance list
-	if names := k8s.GetNestedSlice(e.cluster, "status", "instanceNames"); len(names) > 0 {
+	if names := k8s.GetNestedSlice(t.p.Cluster(), "status", "instanceNames"); len(names) > 0 {
 		for _, n := range names {
 			if s, ok := n.(string); ok {
 				data.expectedInstances = append(data.expectedInstances, s)
 			}
 		}
 	} else {
-		for i := int64(1); i <= e.instances; i++ {
-			data.expectedInstances = append(data.expectedInstances, fmt.Sprintf("%s-%d", e.cfg.ClusterName, i))
+		for i := int64(1); i <= t.p.Instances(); i++ {
+			data.expectedInstances = append(data.expectedInstances, fmt.Sprintf("%s-%d", t.p.Config().ClusterName, i))
 		}
 	}
 
 	// Get all cluster pods
 	podList, err := c.Clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("cnpg.io/cluster=%s", e.cfg.ClusterName),
+		LabelSelector: fmt.Sprintf("cnpg.io/cluster=%s", t.p.Config().ClusterName),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list pods: %w", err)
@@ -144,14 +164,14 @@ func (e *Engine) triageCollect(ctx context.Context) (*triageData, error) {
 	}
 
 	// Parse dangling/healthy PVCs from cluster status
-	if dpvcs := k8s.GetNestedSlice(e.cluster, "status", "danglingPVC"); dpvcs != nil {
+	if dpvcs := k8s.GetNestedSlice(t.p.Cluster(), "status", "danglingPVC"); dpvcs != nil {
 		for _, v := range dpvcs {
 			if s, ok := v.(string); ok {
 				data.danglingPVCs = append(data.danglingPVCs, s)
 			}
 		}
 	}
-	if hpvcs := k8s.GetNestedSlice(e.cluster, "status", "healthyPVC"); hpvcs != nil {
+	if hpvcs := k8s.GetNestedSlice(t.p.Cluster(), "status", "healthyPVC"); hpvcs != nil {
 		for _, v := range hpvcs {
 			if s, ok := v.(string); ok {
 				data.healthyPVCs = append(data.healthyPVCs, s)
@@ -160,7 +180,7 @@ func (e *Engine) triageCollect(ctx context.Context) (*triageData, error) {
 	}
 
 	// Display pod overview
-	displayPodOverview(data)
+	cnpgDisplayPodOverview(data)
 
 	// Identify crash-looping pods
 	for _, pod := range data.runningPods {
@@ -170,7 +190,7 @@ func (e *Engine) triageCollect(ctx context.Context) (*triageData, error) {
 	}
 
 	// Display non-running and crashloop pods
-	displayPodDetails(data)
+	cnpgDisplayPodDetails(data)
 
 	// Fetch crash reasons from logs for crashloop pods
 	for _, pod := range data.crashloopPods {
@@ -220,21 +240,21 @@ func (e *Engine) triageCollect(ctx context.Context) (*triageData, error) {
 		podNodes[pod.Name] = pod.Spec.NodeName
 	}
 
-	var probeInstances []probeTarget
+	var probeInstances []cnpgProbeTarget
 	for _, name := range data.expectedInstances {
 		if !healthyNames[name] && data.pvcStates[name] == "Bound" {
-			probeInstances = append(probeInstances, probeTarget{Name: name, Node: podNodes[name]})
+			probeInstances = append(probeInstances, cnpgProbeTarget{Name: name, Node: podNodes[name]})
 		}
 	}
 
 	// Create probe pods for stranded PVCs
 	if len(probeInstances) > 0 {
 		common.InfoLog("Probing PVC data for stranded instances: %s",
-			joinNames(probeInstances, func(p probeTarget) string { return p.Name }))
+			joinCNPGProbeNames(probeInstances))
 
-		imageName := k8s.GetNestedString(e.cluster, "spec", "imageName")
+		imageName := k8s.GetNestedString(t.p.Cluster(), "spec", "imageName")
 		sa := k8s.ServiceAccountFromPods(data.runningPods)
-		probeResults := e.runPVCProbes(ctx, probeInstances, imageName, ns, sa)
+		probeResults := t.runPVCProbes(ctx, probeInstances, imageName, ns, sa)
 
 		for name, cd := range probeResults {
 			cd.CrashReason = data.crashReasons[name]
@@ -271,7 +291,7 @@ func (e *Engine) triageCollect(ctx context.Context) (*triageData, error) {
 	}
 
 	// Identify primary controldata
-	currentPrimary := k8s.GetNestedString(e.cluster, "status", "currentPrimary")
+	currentPrimary := k8s.GetNestedString(t.p.Cluster(), "status", "currentPrimary")
 	for i := range data.controlData {
 		if data.controlData[i].Pod == currentPrimary {
 			data.primaryControlData = &data.controlData[i]
@@ -296,7 +316,7 @@ func (e *Engine) triageCollect(ctx context.Context) (*triageData, error) {
 	// Replication status from primary
 	output.Section(fmt.Sprintf("Replication Status (from %s)", currentPrimary))
 	if data.primaryIsRunning {
-		e.collectReplicationStatus(ctx, data, currentPrimary, ns)
+		t.collectReplicationStatus(ctx, data, currentPrimary, ns)
 	} else {
 		output.Warn("Primary is not running - cannot query replication status")
 	}
@@ -304,12 +324,12 @@ func (e *Engine) triageCollect(ctx context.Context) (*triageData, error) {
 	// Replication slots
 	output.Section("Replication Slots")
 	if data.primaryIsRunning {
-		e.collectReplicationSlots(ctx, data, currentPrimary, ns)
+		t.collectReplicationSlots(ctx, data, currentPrimary, ns)
 	}
 
 	// WAL info
 	if data.primaryIsRunning {
-		e.collectWALInfo(ctx, data, currentPrimary, ns)
+		t.collectWALInfo(ctx, data, currentPrimary, ns)
 	}
 
 	// Disk space on running instances
@@ -322,13 +342,13 @@ func (e *Engine) triageCollect(ctx context.Context) (*triageData, error) {
 			continue
 		}
 		output.Printf("%s:\n%s\n", pod.Name, result.Stdout)
-		data.diskUsage[pod.Name] = parseDiskPercent(result.Stdout)
+		data.diskUsage[pod.Name] = cnpgParseDiskPercent(result.Stdout)
 	}
 
 	return data, nil
 }
 
-func (e *Engine) collectReplicationStatus(ctx context.Context, data *triageData, primary, ns string) {
+func (t *cnpgTriage) collectReplicationStatus(ctx context.Context, data *cnpgTriageData, primary, ns string) {
 	result, err := k8s.ExecCommand(ctx, primary, ns, "postgres", []string{
 		"psql", "-U", "postgres", "-d", "postgres", "-t", "-A", "-F", "|", "-c",
 		"SELECT client_addr, state, sent_lsn, write_lsn, flush_lsn, replay_lsn, " +
@@ -364,7 +384,7 @@ func (e *Engine) collectReplicationStatus(ctx context.Context, data *triageData,
 	}
 }
 
-func (e *Engine) collectReplicationSlots(ctx context.Context, data *triageData, primary, ns string) {
+func (t *cnpgTriage) collectReplicationSlots(ctx context.Context, data *cnpgTriageData, primary, ns string) {
 	result, err := k8s.ExecCommand(ctx, primary, ns, "postgres", []string{
 		"psql", "-U", "postgres", "-d", "postgres", "-t", "-A", "-F", "|", "-c",
 		"SELECT slot_name, slot_type, active, restart_lsn, " +
@@ -388,7 +408,7 @@ func (e *Engine) collectReplicationSlots(ctx context.Context, data *triageData, 
 	}
 }
 
-func (e *Engine) collectWALInfo(ctx context.Context, data *triageData, primary, ns string) {
+func (t *cnpgTriage) collectWALInfo(ctx context.Context, data *cnpgTriageData, primary, ns string) {
 	result, err := k8s.ExecCommand(ctx, primary, ns, "postgres", []string{
 		"psql", "-U", "postgres", "-d", "postgres", "-t", "-A", "-F", "|", "-c",
 		"SELECT pg_current_wal_lsn() AS current_lsn, " +
@@ -405,13 +425,13 @@ func (e *Engine) collectWALInfo(ctx context.Context, data *triageData, primary, 
 
 // runPVCProbes creates ephemeral probe pods to read pg_controldata from PVCs
 // of non-running instances.
-func (e *Engine) runPVCProbes(ctx context.Context, targets []probeTarget, imageName, ns, sa string) map[string]controlData {
+func (t *cnpgTriage) runPVCProbes(ctx context.Context, targets []cnpgProbeTarget, imageName, ns, sa string) map[string]controlData {
 	c := k8s.GetClients()
 	results := make(map[string]controlData)
 	uid := int64(26)
 
-	for _, t := range targets {
-		probeName := t.Name + "-triage-probe"
+	for _, tgt := range targets {
+		probeName := tgt.Name + "-triage-probe"
 
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
@@ -441,26 +461,26 @@ func (e *Engine) runPVCProbes(ctx context.Context, targets []probeTarget, imageN
 					Name: "pgdata",
 					VolumeSource: corev1.VolumeSource{
 						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-							ClaimName: t.Name,
+							ClaimName: tgt.Name,
 						},
 					},
 				}},
 			},
 		}
 
-		if t.Node != "" {
-			pod.Spec.NodeSelector = map[string]string{"kubernetes.io/hostname": t.Node}
+		if tgt.Node != "" {
+			pod.Spec.NodeSelector = map[string]string{"kubernetes.io/hostname": tgt.Node}
 		}
 
 		_, err := c.Clientset.CoreV1().Pods(ns).Create(ctx, pod, metav1.CreateOptions{})
 		if err != nil {
-			common.WarnLog("Failed to create probe pod for %s: %v", t.Name, err)
+			common.WarnLog("Failed to create probe pod for %s: %v", tgt.Name, err)
 			continue
 		}
 
 		// Wait for probe to complete
-		cd := e.waitAndCollectProbe(ctx, probeName, t.Name, ns)
-		results[t.Name] = cd
+		cd := t.waitAndCollectProbe(ctx, probeName, tgt.Name, ns)
+		results[tgt.Name] = cd
 
 		// Cleanup
 		_ = c.Clientset.CoreV1().Pods(ns).Delete(ctx, probeName, metav1.DeleteOptions{
@@ -471,7 +491,7 @@ func (e *Engine) runPVCProbes(ctx context.Context, targets []probeTarget, imageN
 	return results
 }
 
-func (e *Engine) waitAndCollectProbe(ctx context.Context, probeName, instanceName, ns string) controlData {
+func (t *cnpgTriage) waitAndCollectProbe(ctx context.Context, probeName, instanceName, ns string) controlData {
 	c := k8s.GetClients()
 
 	// Poll for completion (30 retries, 5s delay = 150s max)
@@ -502,13 +522,18 @@ func (e *Engine) waitAndCollectProbe(ctx context.Context, probeName, instanceNam
 	return cd
 }
 
-// --- Analysis ---
+// --- Analyze ---
 
-func (e *Engine) triageAnalyze(data *triageData) *model.TriageResult {
-	currentPrimary := k8s.GetNestedString(e.cluster, "status", "currentPrimary")
+func (t *cnpgTriage) Analyze(_ context.Context) (*model.TriageResult, error) {
+	data := t.data
+	if data == nil {
+		return nil, fmt.Errorf("Analyze called before Collect")
+	}
+
+	currentPrimary := k8s.GetNestedString(t.p.Cluster(), "status", "currentPrimary")
 
 	// Cross-instance comparison
-	comparison := crossInstanceComparison(data, currentPrimary)
+	comparison := cnpgCrossInstanceComparison(data, currentPrimary)
 
 	// Display comparison
 	output.Section("Data Freshness Check")
@@ -536,28 +561,33 @@ func (e *Engine) triageAnalyze(data *triageData) *model.TriageResult {
 	}
 
 	// Build per-instance assessments
-	assessments := e.buildAssessments(data, &comparison, currentPrimary)
+	assessments := t.buildAssessments(data, &comparison, currentPrimary)
 
 	readyCount := 0
-	if v := k8s.GetNestedInt64(e.cluster, "status", "readyInstances"); v > 0 {
+	if v := k8s.GetNestedInt64(t.p.Cluster(), "status", "readyInstances"); v > 0 {
 		readyCount = int(v)
 	}
 
-	return &model.TriageResult{
-		Engine: e.Name(),
+	result := &model.TriageResult{
+		Engine: t.Name(),
 		Cluster: model.ObjectRef{
-			Namespace: e.cfg.Namespace,
-			Name:      e.cfg.ClusterName,
+			Namespace: t.p.Config().Namespace,
+			Name:      t.p.Config().ClusterName,
 		},
 		Assessments:    assessments,
 		DataComparison: comparison,
-		ClusterPhase:   getMapString(e.clusterStatus, "phase"),
+		ClusterPhase:   getMapString(t.p.Status(), "phase"),
 		ReadyCount:     readyCount,
-		TotalCount:     int(e.instances),
+		TotalCount:     int(t.p.Instances()),
 	}
+
+	// Display
+	t.triageDisplay(data, result)
+
+	return result, nil
 }
 
-func crossInstanceComparison(data *triageData, primaryName string) model.DataComparison {
+func cnpgCrossInstanceComparison(data *cnpgTriageData, primaryName string) model.DataComparison {
 	pTL := int64(0)
 	pLSN := "unknown"
 	if data.primaryControlData != nil {
@@ -615,7 +645,7 @@ func crossInstanceComparison(data *triageData, primaryName string) model.DataCom
 	}
 }
 
-func (e *Engine) buildAssessments(data *triageData, comparison *model.DataComparison,
+func (t *cnpgTriage) buildAssessments(data *cnpgTriageData, comparison *model.DataComparison,
 	primaryName string) []model.InstanceAssessment {
 
 	pTL := data.primaryTimeline
@@ -657,7 +687,7 @@ func (e *Engine) buildAssessments(data *triageData, comparison *model.DataCompar
 		parts := strings.Split(inst.Pod, "-")
 		replicaNum := parts[len(parts)-1]
 		healCmd := fmt.Sprintf("hasteward repair -e cnpg -c %s -n %s --instance %s --backups-path /backups",
-			e.cfg.ClusterName, e.cfg.Namespace, replicaNum)
+			t.p.Config().ClusterName, t.p.Config().Namespace, replicaNum)
 
 		switch {
 		case isPrimary:
@@ -771,19 +801,19 @@ func (e *Engine) buildAssessments(data *triageData, comparison *model.DataCompar
 
 // --- Display ---
 
-func displayClusterStatus(e *Engine) {
+func (t *cnpgTriage) displayClusterStatus() {
 	output.Section("Cluster Status")
-	output.Field("Phase", getMapString(e.clusterStatus, "phase"))
-	output.Field("Instances", fmt.Sprintf("%d", e.instances))
-	output.Field("Ready instances", fmt.Sprintf("%v", e.clusterStatus["readyInstances"]))
-	output.Field("Current primary", getMapString(e.clusterStatus, "currentPrimary"))
-	output.Field("Target primary", getMapString(e.clusterStatus, "targetPrimary"))
-	output.Field("Timeline ID", fmt.Sprintf("%v", e.clusterStatus["timelineID"]))
-	output.Field("PostgreSQL image", getMapString(e.clusterSpec, "imageName"))
-	output.Field("Fenced instances", fmt.Sprintf("%v", e.fencedInstances))
+	output.Field("Phase", getMapString(t.p.Status(), "phase"))
+	output.Field("Instances", fmt.Sprintf("%d", t.p.Instances()))
+	output.Field("Ready instances", fmt.Sprintf("%v", t.p.Status()["readyInstances"]))
+	output.Field("Current primary", getMapString(t.p.Status(), "currentPrimary"))
+	output.Field("Target primary", getMapString(t.p.Status(), "targetPrimary"))
+	output.Field("Timeline ID", fmt.Sprintf("%v", t.p.Status()["timelineID"]))
+	output.Field("PostgreSQL image", getMapString(t.p.Spec(), "imageName"))
+	output.Field("Fenced instances", fmt.Sprintf("%v", t.p.FencedInstances()))
 }
 
-func displayPodOverview(data *triageData) {
+func cnpgDisplayPodOverview(data *cnpgTriageData) {
 	output.Section("Pod Overview")
 	output.Field("Expected instances", strings.Join(data.expectedInstances, ", "))
 	output.Field("Running", joinPodNames(data.runningPods))
@@ -797,7 +827,7 @@ func displayPodOverview(data *triageData) {
 	}
 }
 
-func displayPodDetails(data *triageData) {
+func cnpgDisplayPodDetails(data *cnpgTriageData) {
 	for _, pod := range data.nonRunningPods {
 		reason := "N/A"
 		restarts := int32(0)
@@ -841,11 +871,11 @@ func displayControlData(cd controlData) {
 	output.Printf("  Min recovery end: %s\n", cd.MinRecoveryEnd)
 }
 
-func (e *Engine) triageDisplay(data *triageData, result *model.TriageResult) {
+func (t *cnpgTriage) triageDisplay(data *cnpgTriageData, result *model.TriageResult) {
 	output.Banner("TRIAGE SUMMARY")
 
-	currentPrimary := k8s.GetNestedString(e.cluster, "status", "currentPrimary")
-	output.Printf("Cluster: %s (%s)\n", e.cfg.ClusterName, e.cfg.Namespace)
+	currentPrimary := k8s.GetNestedString(t.p.Cluster(), "status", "currentPrimary")
+	output.Printf("Cluster: %s (%s)\n", t.p.Config().ClusterName, t.p.Config().Namespace)
 	output.Printf("Primary: %s (timeline %s, LSN %s)\n",
 		currentPrimary, data.primaryTimeline,
 		data.primaryControlData.CheckpointLocation)
@@ -877,7 +907,7 @@ func (e *Engine) triageDisplay(data *triageData, result *model.TriageResult) {
 		}
 	}
 	if healCount > 0 {
-		output.SuggestedCommands("cnpg", e.cfg.ClusterName, e.cfg.Namespace)
+		output.SuggestedCommands("cnpg", t.p.Config().ClusterName, t.p.Config().Namespace)
 	}
 }
 
@@ -938,7 +968,7 @@ func parseTimelineInt(tl string) int64 {
 	return n
 }
 
-func parseDiskPercent(dfOutput string) int {
+func cnpgParseDiskPercent(dfOutput string) int {
 	lines := strings.Split(strings.TrimSpace(dfOutput), "\n")
 	if len(lines) < 2 {
 		return -1
@@ -955,53 +985,10 @@ func parseDiskPercent(dfOutput string) int {
 	return pct
 }
 
-func getMapString(m map[string]interface{}, key string) string {
-	if m == nil {
-		return "Unknown"
-	}
-	if v, ok := m[key]; ok {
-		return fmt.Sprintf("%v", v)
-	}
-	return "Unknown"
-}
-
-func podNameSet(pods []corev1.Pod) map[string]bool {
-	m := make(map[string]bool)
-	for _, p := range pods {
-		m[p.Name] = true
-	}
-	return m
-}
-
-func setFromSlice(s []string) map[string]bool {
-	m := make(map[string]bool)
-	for _, v := range s {
-		m[v] = true
-	}
-	return m
-}
-
-func joinPodNames(pods []corev1.Pod) string {
-	if len(pods) == 0 {
-		return "none"
-	}
-	names := make([]string, len(pods))
-	for i, p := range pods {
-		names[i] = p.Name
+func joinCNPGProbeNames(targets []cnpgProbeTarget) string {
+	names := make([]string, len(targets))
+	for i, t := range targets {
+		names[i] = t.Name
 	}
 	return strings.Join(names, ", ")
-}
-
-func joinNames[T any](items []T, fn func(T) string) string {
-	names := make([]string, len(items))
-	for i, item := range items {
-		names[i] = fn(item)
-	}
-	return strings.Join(names, ", ")
-}
-
-// probeTarget identifies an instance whose PVC should be probed.
-type probeTarget struct {
-	Name string
-	Node string
 }

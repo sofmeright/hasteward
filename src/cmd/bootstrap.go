@@ -3,8 +3,9 @@ package cmd
 import (
 	"fmt"
 
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/bootstrap"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/printer"
 
 	"github.com/spf13/cobra"
@@ -40,16 +41,17 @@ Examples:
 			return err
 		}
 
-		if Cfg.Engine != "galera" {
-			return fmt.Errorf("bootstrap is only supported for Galera clusters (got engine=%q)", Cfg.Engine)
-		}
-
-		eng, err := PreRun(cmd, "bootstrap")
+		prov, err := PreRun(cmd, "bootstrap")
 		if err != nil {
 			return err
 		}
 
-		result, err := eng.Bootstrap(cmd.Context(), IsDryRun())
+		bootstrapper, err := bootstrap.Get(prov)
+		if err != nil {
+			return err
+		}
+
+		result, err := bootstrap.Run(cmd.Context(), bootstrapper, IsDryRun(), engine.NopSink{})
 		if err != nil {
 			if !p.IsHuman() && result != nil {
 				// Return the partial result (includes decision) even on error

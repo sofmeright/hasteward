@@ -7,6 +7,8 @@ import (
 	v1alpha1 "gitlab.prplanit.com/precisionplanit/hasteward/api/v1alpha1"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/backup"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/provider"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/metrics"
 )
 
@@ -41,19 +43,25 @@ func (s *Scheduler) runBackup(db *ManagedDB, repoName string) {
 	// Set restic env vars (S3 credentials)
 	_ = envVars // TODO: pass env vars to restic client when Config supports it
 
-	// Get and validate engine
-	eng, err := engine.Get(cfg.Engine)
+	// Get and validate provider
+	prov, err := provider.GetProvider(cfg.Engine)
 	if err != nil {
 		log.Error("Engine not found", "error", err)
 		return
 	}
-	if err := eng.Validate(ctx, cfg); err != nil {
+	if err := prov.Validate(ctx, cfg); err != nil {
 		log.Error("Engine validation failed", "error", err)
 		return
 	}
 
-	// Run backup
-	result, err := eng.Backup(ctx)
+	// Get backer and run
+	backer, err := backup.Get(prov)
+	if err != nil {
+		log.Error("Backer not found", "error", err)
+		return
+	}
+
+	result, err := backup.Run(ctx, backer, engine.NopSink{})
 	if err != nil {
 		log.Error("Backup failed", "error", err)
 		metrics.RecordBackupFailure(db.Engine, db.ClusterName, db.Namespace, repoName)

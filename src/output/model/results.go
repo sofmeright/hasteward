@@ -132,3 +132,79 @@ type BootstrapResult struct {
 	ActionsTaken   []BootstrapAction     `json:"actionsTaken,omitempty"`
 	FinalHealth    *ClusterHealthSummary `json:"finalHealth,omitempty"`
 }
+
+// GetBackupsResult holds the output of "get backups".
+type GetBackupsResult struct {
+	Snapshots []SnapshotEntry `json:"snapshots"`
+}
+
+// SnapshotEntry represents a single backup snapshot in "get backups" output.
+type SnapshotEntry struct {
+	Repository string `json:"repository"`
+	SnapshotID string `json:"snapshotId"`
+	Type       string `json:"type"`
+	Engine     string `json:"engine"`
+	Namespace  string `json:"namespace"`
+	Cluster    string `json:"cluster"`
+	Age        string `json:"age"`
+}
+
+// GetPoliciesResult holds the output of "get policies".
+type GetPoliciesResult struct {
+	Policies []PolicyEntry `json:"policies"`
+}
+
+// PolicyEntry represents a single BackupPolicy in "get policies" output.
+type PolicyEntry struct {
+	Name           string   `json:"name"`
+	BackupSchedule string   `json:"backupSchedule"`
+	TriageSchedule string   `json:"triageSchedule"`
+	Mode           string   `json:"mode"`
+	Repositories   []string `json:"repositories,omitempty"`
+}
+
+// GetRepositoriesResult holds the output of "get repositories".
+type GetRepositoriesResult struct {
+	Repositories []RepositoryEntry `json:"repositories"`
+}
+
+// RepositoryEntry represents a single BackupRepository in "get repositories" output.
+type RepositoryEntry struct {
+	Name             string `json:"name"`
+	Repository       string `json:"repository"`
+	Ready            bool   `json:"ready"`
+	SnapshotCount    int64  `json:"snapshotCount"`
+	TotalSize        string `json:"totalSize"`
+	DeduplicatedSize string `json:"deduplicatedSize"`
+}
+
+// GetStatusResult holds the output of "get status".
+type GetStatusResult struct {
+	Clusters []ClusterStatusEntry `json:"clusters"`
+}
+
+// ClusterStatusEntry represents a managed database cluster in "get status" output.
+type ClusterStatusEntry struct {
+	Engine       string `json:"engine"`
+	Namespace    string `json:"namespace"`
+	Name         string `json:"name"`
+	Managed      string `json:"managed"`
+	TriageResult string `json:"triageResult"`
+	LastTriage   string `json:"lastTriage"`
+	LastBackup   string `json:"lastBackup"`
+}
+
+// PruneResult holds the output of "prune backups".
+type PruneResult struct {
+	TotalKept    int `json:"totalKept"`
+	TotalRemoved int `json:"totalRemoved"`
+}
+
+// ExportResult holds the output of "export".
+type ExportResult struct {
+	OutputFile string `json:"outputFile"`
+	Snapshot   string `json:"snapshot"`
+	Engine     string `json:"engine"`
+	Cluster    string `json:"cluster"`
+	Namespace  string `json:"namespace"`
+}

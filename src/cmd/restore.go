@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"time"
 
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/restore"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/printer"
@@ -27,12 +29,17 @@ var restoreCmd = &cobra.Command{
 			return fmt.Errorf("restore requires RESTIC_PASSWORD env var")
 		}
 
-		eng, err := PreRun(cmd, "restore")
+		prov, err := PreRun(cmd, "restore")
 		if err != nil {
 			return err
 		}
 
-		result, err := eng.Restore(cmd.Context())
+		restorer, err := restore.Get(prov)
+		if err != nil {
+			return err
+		}
+
+		result, err := restore.Run(cmd.Context(), restorer, engine.NopSink{})
 		if err != nil {
 			if !p.IsHuman() {
 				printer.PrintResult(p, (*model.RestoreResult)(nil), nil, err)

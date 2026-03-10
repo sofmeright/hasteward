@@ -2,10 +2,12 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/restic"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/retention"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/output"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/printer"
 
 	"github.com/spf13/cobra"
 )
@@ -31,20 +33,16 @@ Examples:
   hasteward prune backups -e cnpg -c zitadel-postgres -n zeldas-lullaby --backups-path /backups \
     -t diverged --keep-last 3`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		p, err := InitPrinter("prune-backups")
+		if err != nil {
+			return err
+		}
+
 		if Cfg.BackupsPath == "" {
 			return fmt.Errorf("prune backups requires --backups-path")
 		}
 		if Cfg.ResticPassword == "" {
 			return fmt.Errorf("prune backups requires RESTIC_PASSWORD env var")
-		}
-		if Cfg.Engine == "" {
-			return fmt.Errorf("prune backups requires --engine/-e")
-		}
-		if Cfg.ClusterName == "" {
-			return fmt.Errorf("prune backups requires --cluster/-c")
-		}
-		if Cfg.Namespace == "" {
-			return fmt.Errorf("prune backups requires --namespace/-n")
 		}
 
 		switch pbType {
@@ -53,60 +51,37 @@ Examples:
 			return fmt.Errorf("--type must be backup, diverged, or all (got %q)", pbType)
 		}
 
-		if Cfg.Verbose {
-			os.Setenv(common.EnvPrefix+"LOG_LEVEL", "debug")
-			common.InitLogging(false)
-		}
-		if Cfg.ResticPassword != "" {
-			common.RegisterSecret(Cfg.ResticPassword)
+		prov, err := PreRun(cmd, "prune backups")
+		if err != nil {
+			return err
 		}
 
-		rc := restic.NewClient(Cfg.BackupsPath, Cfg.ResticPassword)
-
-		baseTags := map[string]string{
-			"engine":    Cfg.Engine,
-			"cluster":   Cfg.ClusterName,
-			"namespace": Cfg.Namespace,
+		retainer, err := retention.Get(prov)
+		if err != nil {
+			return err
 		}
 
-		policy := restic.RetentionPolicy{
+		opts := retention.PruneOptions{
+			Type:        pbType,
 			KeepLast:    pbKeepLast,
 			KeepDaily:   pbKeepDaily,
 			KeepWeekly:  pbKeepWeekly,
 			KeepMonthly: pbKeepMonthly,
 		}
 
-		common.InfoLog("Applying retention policy (type=%s): keep-last=%d keep-daily=%d keep-weekly=%d keep-monthly=%d",
-			pbType, policy.KeepLast, policy.KeepDaily, policy.KeepWeekly, policy.KeepMonthly)
-
-		totalKeep := 0
-		totalRemove := 0
-
-		if pbType == "backup" || pbType == "all" {
-			tags := copyTags(baseTags)
-			tags["type"] = "backup"
-			results, err := rc.Forget(cmd.Context(), tags, policy, pbType == "backup")
-			if err != nil {
-				return fmt.Errorf("prune (backup) failed: %w", err)
+		result, err := retention.Run(cmd.Context(), retainer, opts, engine.NopSink{})
+		if err != nil {
+			if !p.IsHuman() {
+				printer.PrintResult(p, (*model.PruneResult)(nil), nil, err)
 			}
-			for _, r := range results {
-				totalKeep += len(r.Keep)
-				totalRemove += len(r.Remove)
-			}
+			return err
 		}
 
-		if pbType == "diverged" || pbType == "all" {
-			tags := copyTags(baseTags)
-			tags["type"] = "diverged"
-			kept, removed, err := rc.ForgetGrouped(cmd.Context(), tags, policy, true)
-			if err != nil {
-				return fmt.Errorf("prune (diverged) failed: %w", err)
-			}
-			totalKeep += kept
-			totalRemove += removed
+		if p.IsHuman() {
+			output.Complete(fmt.Sprintf("Pruned %d snapshots, kept %d", result.TotalRemoved, result.TotalKept))
+		} else {
+			printer.PrintResult(p, result, nil, nil)
 		}
-
-		fmt.Printf("Pruned %d snapshots, kept %d\n", totalRemove, totalKeep)
 		return nil
 	},
 }
@@ -118,14 +93,6 @@ var (
 	pbKeepMonthly int
 	pbType        string
 )
-
-func copyTags(src map[string]string) map[string]string {
-	dst := make(map[string]string, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
-}
 
 func init() {
 	pruneBackupsCmd.Flags().IntVar(&pbKeepLast, "keep-last", 7, "Keep the last N snapshots (or jobs for diverged)")

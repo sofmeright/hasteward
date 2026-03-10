@@ -1,24 +1,22 @@
-package cnpg
+package provider
 
 import (
 	"context"
 	"fmt"
 
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/k8s"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 func init() {
-	engine.Register("cnpg", func() engine.Engine { return &Engine{} })
+	RegisterProvider("cnpg", func() EngineProvider { return &CNPGProvider{} })
 }
 
-// Engine implements the CNPG (CloudNativePG PostgreSQL) engine.
-type Engine struct {
+// CNPGProvider holds validated state for a CNPG (CloudNativePG PostgreSQL) engine.
+type CNPGProvider struct {
 	cfg     *common.Config
 	cluster *unstructured.Unstructured
 
@@ -30,15 +28,26 @@ type Engine struct {
 	fencedInstances    []string
 }
 
-func (e *Engine) Name() string { return "cnpg" }
+func (p *CNPGProvider) Name() string            { return "cnpg" }
+func (p *CNPGProvider) Config() *common.Config   { return p.cfg }
+func (p *CNPGProvider) Cluster() *unstructured.Unstructured    { return p.cluster }
+func (p *CNPGProvider) Spec() map[string]interface{}           { return p.clusterSpec }
+func (p *CNPGProvider) Status() map[string]interface{}         { return p.clusterStatus }
+func (p *CNPGProvider) Annotations() map[string]interface{}    { return p.clusterAnnotations }
+func (p *CNPGProvider) Instances() int64         { return p.instances }
+func (p *CNPGProvider) FencedInstances() []string { return p.fencedInstances }
 
-// Bootstrap is not applicable to CNPG clusters (CNPG operator handles failover).
-func (e *Engine) Bootstrap(_ context.Context, _ bool) (*model.BootstrapResult, error) {
-	return nil, fmt.Errorf("bootstrap is not supported for CNPG clusters — CNPG operator handles failover automatically")
+// SetCluster replaces the cached CR state (used after re-fetch during repair).
+func (p *CNPGProvider) SetCluster(obj *unstructured.Unstructured) {
+	p.cluster = obj
+	p.clusterSpec = k8s.GetNestedMap(obj, "spec")
+	p.clusterStatus = k8s.GetNestedMap(obj, "status")
+	p.clusterAnnotations = k8s.GetNestedMap(obj, "metadata", "annotations")
+	p.fencedInstances = ParseFencedInstances(p.clusterAnnotations)
 }
 
-func (e *Engine) Validate(ctx context.Context, cfg *common.Config) error {
-	e.cfg = cfg
+func (p *CNPGProvider) Validate(ctx context.Context, cfg *common.Config) error {
+	p.cfg = cfg
 
 	c := k8s.GetClients()
 	if c == nil {
@@ -50,24 +59,15 @@ func (e *Engine) Validate(ctx context.Context, cfg *common.Config) error {
 	if err != nil {
 		return fmt.Errorf("CNPG Cluster %s/%s not found: %w", cfg.Namespace, cfg.ClusterName, err)
 	}
-	e.cluster = obj
 
-	e.clusterSpec = k8s.GetNestedMap(obj, "spec")
-	e.clusterStatus = k8s.GetNestedMap(obj, "status")
-	e.clusterAnnotations = k8s.GetNestedMap(obj, "metadata", "annotations")
-	e.instances = k8s.GetNestedInt64(obj, "spec", "instances")
-
-	// Parse fenced instances from annotation
-	e.fencedInstances = parseFencedInstances(e.clusterAnnotations)
+	p.SetCluster(obj)
+	p.instances = k8s.GetNestedInt64(obj, "spec", "instances")
 
 	return nil
 }
 
-// ptr returns a pointer to the given value.
-func ptr[T any](v T) *T { return &v }
-
-// parseFencedInstances extracts the fenced instances list from cluster annotations.
-func parseFencedInstances(annotations map[string]interface{}) []string {
+// ParseFencedInstances extracts the fenced instances list from cluster annotations.
+func ParseFencedInstances(annotations map[string]interface{}) []string {
 	raw, ok := annotations["cnpg.io/fencedInstances"]
 	if !ok {
 		return nil
@@ -76,7 +76,6 @@ func parseFencedInstances(annotations map[string]interface{}) []string {
 	if !ok || s == "" || s == "[]" {
 		return nil
 	}
-	// Simple JSON array parse for string arrays like ["pod-1","pod-2"]
 	return parseJSONStringArray(s)
 }
 

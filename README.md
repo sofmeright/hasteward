@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="src/assets/logo.png" width="220" alt="HASteward">
+</p>
+
 # HASteward
 
 **H**igh **A**vailability **Steward** — Go CLI and Kubernetes operator for database cluster triage, repair, backup, and restore. Backups use [restic](https://restic.net/) for block-level dedup, encryption, and compression.

@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"fmt"
-
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/prunewal"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output"
 
 	"github.com/spf13/cobra"
@@ -33,16 +33,17 @@ Examples:
 			return err
 		}
 
-		if Cfg.Engine != "cnpg" {
-			return fmt.Errorf("prune wal is only supported for CNPG clusters (got engine=%q)", Cfg.Engine)
-		}
-
-		eng, err := PreRun(cmd, "prune wal")
+		prov, err := PreRun(cmd, "prune wal")
 		if err != nil {
 			return err
 		}
 
-		if err := eng.PruneWAL(cmd.Context()); err != nil {
+		pruner, err := prunewal.Get(prov)
+		if err != nil {
+			return err
+		}
+
+		if err := prunewal.Run(cmd.Context(), pruner, engine.NopSink{}); err != nil {
 			return err
 		}
 

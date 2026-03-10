@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"time"
 
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine"
+	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/backup"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
 	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/printer"
@@ -29,12 +31,17 @@ var backupCmd = &cobra.Command{
 			}
 		}
 
-		eng, err := PreRun(cmd, "backup")
+		prov, err := PreRun(cmd, "backup")
 		if err != nil {
 			return err
 		}
 
-		result, err := eng.Backup(cmd.Context())
+		backer, err := backup.Get(prov)
+		if err != nil {
+			return err
+		}
+
+		result, err := backup.Run(cmd.Context(), backer, engine.NopSink{})
 		if err != nil {
 			if !p.IsHuman() {
 				printer.PrintResult(p, (*model.BackupResult)(nil), nil, err)
