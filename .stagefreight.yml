@@ -153,6 +153,7 @@ lint:
   level: full
   exclude:
     - "src/assets/logo.png"
+    - "src/assets/logo-192.png"
     - "ansible/**"
   modules:
     freshness:

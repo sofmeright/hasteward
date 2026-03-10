@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src/assets/logo.png" width="220" alt="HASteward">
+  <img src="src/assets/logo-192.png" width="192" alt="HASteward">
 </p>
 
 # HASteward
