@@ -6,16 +6,17 @@
 
 **H**igh **A**vailability **Steward** is a (*WIP*) Go CLI and Kubernetes operator for database cluster triage, repair, backup, and restore. Pronounced like **Haste·Ward** or **H.A.** or **Ha!** Steward — flexible pronunciation. Backups use [restic](https://restic.net/) for block-level dedup, encryption, and compression.
 
+<!-- sf:project:start -->
+[![badge/GitHub-source-181717?logo=github](https://img.shields.io/badge/GitHub-source-181717?logo=github)](https://github.com/prplanit/HASteward) [![badge/GitLab-source-FC6D26?logo=gitlab](https://img.shields.io/badge/GitLab-source-FC6D26?logo=gitlab)](https://gitlab.prplanit.com/precisionplanit/hasteward) [![Last Commit](https://img.shields.io/github/last-commit/prplanit/HASteward)](https://github.com/prplanit/HASteward/commits) [![Open Issues](https://img.shields.io/github/issues/prplanit/HASteward)](https://github.com/prplanit/HASteward/issues) ![github/issues-pr/prplanit/HASteward](https://img.shields.io/github/issues-pr/prplanit/HASteward) [![Contributors](https://img.shields.io/github/contributors/prplanit/HASteward)](https://github.com/prplanit/HASteward/graphs/contributors)
+<!-- sf:project:end -->
 <!-- sf:badges:start -->
-[![release](https://raw.githubusercontent.com/prplanit/HASteward/main/.stagefreight/badges/release.svg)](https://github.com/prplanit/HASteward/releases) [![build](https://raw.githubusercontent.com/prplanit/HASteward/main/.stagefreight/badges/build.svg)](https://github.com/prplanit/HASteward/actions) [![license](https://raw.githubusercontent.com/prplanit/HASteward/main/.stagefreight/badges/license.svg)](https://github.com/prplanit/HASteward/blob/main/LICENSE) ![updated](https://raw.githubusercontent.com/prplanit/HASteward/main/.stagefreight/badges/updated.svg) [![docker/pulls/prplanit/hasteward](https://img.shields.io/docker/pulls/prplanit/hasteward)](https://hub.docker.com/r/prplanit/hasteward)
+[![build](https://raw.githubusercontent.com/prplanit/HASteward/main/.stagefreight/badges/build.svg)](https://gitlab.prplanit.com/precisionplanit/hasteward/-/pipelines) [![license](https://raw.githubusercontent.com/prplanit/HASteward/main/.stagefreight/badges/license.svg)](https://github.com/prplanit/HASteward/blob/main/LICENSE) [![release](https://raw.githubusercontent.com/prplanit/HASteward/main/.stagefreight/badges/release.svg)](https://github.com/prplanit/HASteward/releases) ![updated](https://raw.githubusercontent.com/prplanit/HASteward/main/.stagefreight/badges/updated.svg) [![donate](https://img.shields.io/badge/donate-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/T6T41IT163) [![sponsor](https://img.shields.io/badge/sponsor-EA4AAA?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/prplanit)
 <!-- sf:badges:end -->
+<!-- sf:image:start -->
+[![Docker](https://img.shields.io/badge/Docker-prplanit%2Fhasteward-2496ED?logo=docker&logoColor=white)](https://hub.docker.com/r/prplanit/hasteward) [![pulls](https://raw.githubusercontent.com/prplanit/HASteward/main/.stagefreight/badges/pulls.svg)](https://hub.docker.com/r/prplanit/hasteward)
 
-### Public Resources
-
-|                  |                                                                                          |
-| ---------------- | ---------------------------------------------------------------------------------------- |
-| Docker Images    | [Docker Hub](https://hub.docker.com/r/prplanit/hasteward)                                |
-| Source Code      | [GitHub](https://github.com/prplanit/HASteward)                                         |
+[![latest](https://raw.githubusercontent.com/prplanit/HASteward/main/.stagefreight/badges/latest.svg)](https://hub.docker.com/r/prplanit/hasteward/tags?name=latest) ![updated](https://raw.githubusercontent.com/prplanit/HASteward/main/.stagefreight/badges/release-updated.svg) [![size](https://raw.githubusercontent.com/prplanit/HASteward/main/.stagefreight/badges/release-size.svg)](https://hub.docker.com/r/prplanit/hasteward/tags?name=latest) [![latest-dev](https://raw.githubusercontent.com/prplanit/HASteward/main/.stagefreight/badges/latest-dev.svg)](https://hub.docker.com/r/prplanit/hasteward/tags?name=latest-dev) ![updated](https://raw.githubusercontent.com/prplanit/HASteward/main/.stagefreight/badges/dev-updated.svg) [![size](https://raw.githubusercontent.com/prplanit/HASteward/main/.stagefreight/badges/dev-size.svg)](https://hub.docker.com/r/prplanit/hasteward/tags?name=latest-dev)
+<!-- sf:image:end -->
 
 ### Supported Engines
 
@@ -53,14 +54,6 @@
 | File | |
 |------|-|
 | [Kubernetes Job](docs/k8s/job.yaml) | Ad-hoc Job manifest for CLI operations |
-
-### Container Image
-
-```
-docker.io/prplanit/hasteward:latest
-```
-
-Single static binary with embedded restic. No runtime dependencies.
 
 ## License
 
