@@ -1,9 +1,9 @@
 package cmd
 
 import (
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/printer"
+	"github.com/PrPlanIT/HASteward/src/output"
+	"github.com/PrPlanIT/HASteward/src/output/model"
+	"github.com/PrPlanIT/HASteward/src/output/printer"
 )
 
 // printerSink adapts a *printer.Printer to the engine.StepSink interface.

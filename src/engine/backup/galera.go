@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"time"
 
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/provider"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/k8s"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/restic"
+	"github.com/PrPlanIT/HASteward/src/common"
+	"github.com/PrPlanIT/HASteward/src/engine/provider"
+	"github.com/PrPlanIT/HASteward/src/k8s"
+	"github.com/PrPlanIT/HASteward/src/output"
+	"github.com/PrPlanIT/HASteward/src/output/model"
+	"github.com/PrPlanIT/HASteward/src/restic"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )

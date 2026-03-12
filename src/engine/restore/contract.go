@@ -3,7 +3,7 @@ package restore
 import (
 	"context"
 
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
+	"github.com/PrPlanIT/HASteward/src/output/model"
 )
 
 // Restorer is the engine-specific hook contract for restore operations.

@@ -3,8 +3,8 @@ package restore
 import (
 	"context"
 
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
+	"github.com/PrPlanIT/HASteward/src/engine"
+	"github.com/PrPlanIT/HASteward/src/output/model"
 )
 
 // Run is the shared restore lifecycle.

@@ -11,9 +11,9 @@ ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
     go build -ldflags="-s -w \
-      -X gitlab.prplanit.com/precisionplanit/hasteward/src/version.Version=${VERSION} \
-      -X gitlab.prplanit.com/precisionplanit/hasteward/src/version.Commit=${COMMIT} \
-      -X gitlab.prplanit.com/precisionplanit/hasteward/src/version.BuildDate=${BUILD_DATE}" \
+      -X github.com/PrPlanIT/HASteward/src/version.Version=${VERSION} \
+      -X github.com/PrPlanIT/HASteward/src/version.Commit=${COMMIT} \
+      -X github.com/PrPlanIT/HASteward/src/version.BuildDate=${BUILD_DATE}" \
     -o /hasteward ./cmd/hasteward
 
 # Fetch restic binary
@@ -26,10 +26,14 @@ RUN apk add --no-cache curl bzip2 && \
     | bunzip2 > /restic && chmod +x /restic
 
 FROM scratch
-LABEL maintainer="SoFMeRight <sofmeright@gmail.com>" \
+LABEL maintainer="PrPlanIT <precisionplanit@gmail.com>" \
       org.opencontainers.image.title="HASteward" \
       org.opencontainers.image.description="High Availability Steward - database cluster operator with restic-backed dedup backups" \
-      org.opencontainers.image.source="https://gitlab.prplanit.com/precisionplanit/hasteward"
+      org.opencontainers.image.source="https://github.com/PrPlanIT/HASteward" \
+      org.opencontainers.image.url="https://hub.docker.com/r/prplanit/hasteward" \
+      org.opencontainers.image.documentation="https://github.com/PrPlanIT/HASteward#readme" \
+      org.opencontainers.image.licenses="AGPL-3.0-only" \
+      org.opencontainers.image.vendor="PrPlanIT"
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /hasteward /hasteward
 COPY --from=restic /restic /usr/bin/restic

@@ -4,13 +4,13 @@ import (
 	"context"
 	"log/slog"
 
-	v1alpha1 "gitlab.prplanit.com/precisionplanit/hasteward/api/v1alpha1"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/provider"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/repair"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/triage"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/metrics"
+	v1alpha1 "github.com/PrPlanIT/HASteward/api/v1alpha1"
+	"github.com/PrPlanIT/HASteward/src/common"
+	"github.com/PrPlanIT/HASteward/src/engine"
+	"github.com/PrPlanIT/HASteward/src/engine/provider"
+	"github.com/PrPlanIT/HASteward/src/engine/repair"
+	"github.com/PrPlanIT/HASteward/src/engine/triage"
+	"github.com/PrPlanIT/HASteward/src/metrics"
 )
 
 // runTriage is called by the cron scheduler to health-check a database.

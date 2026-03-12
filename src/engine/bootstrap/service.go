@@ -3,9 +3,9 @@ package bootstrap
 import (
 	"context"
 
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/provider"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
+	"github.com/PrPlanIT/HASteward/src/engine"
+	"github.com/PrPlanIT/HASteward/src/engine/provider"
+	"github.com/PrPlanIT/HASteward/src/output/model"
 )
 
 // Bootstrapper is the engine-specific hook contract for bootstrap operations.

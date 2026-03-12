@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/k8s"
+	"github.com/PrPlanIT/HASteward/src/common"
+	"github.com/PrPlanIT/HASteward/src/k8s"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"

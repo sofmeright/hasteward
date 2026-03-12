@@ -1,8 +1,8 @@
 package backup
 
 import (
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/provider"
+	"github.com/PrPlanIT/HASteward/src/engine"
+	"github.com/PrPlanIT/HASteward/src/engine/provider"
 )
 
 // Constructor creates a Backer from a validated EngineProvider.

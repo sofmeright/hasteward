@@ -1,10 +1,10 @@
 package cmd
 
 import (
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/triage"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/printer"
+	"github.com/PrPlanIT/HASteward/src/engine/triage"
+	"github.com/PrPlanIT/HASteward/src/output"
+	"github.com/PrPlanIT/HASteward/src/output/model"
+	"github.com/PrPlanIT/HASteward/src/output/printer"
 
 	"github.com/spf13/cobra"
 )

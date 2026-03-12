@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
+	"github.com/PrPlanIT/HASteward/src/output/model"
 )
 
 // Backer is the engine-specific hook contract for backup operations.

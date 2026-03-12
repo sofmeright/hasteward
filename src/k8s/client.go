@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
+	"github.com/PrPlanIT/HASteward/src/common"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

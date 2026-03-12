@@ -1,8 +1,8 @@
 package retention
 
 import (
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/provider"
+	"github.com/PrPlanIT/HASteward/src/engine"
+	"github.com/PrPlanIT/HASteward/src/engine/provider"
 )
 
 // Constructor creates a Retainer for a given provider.

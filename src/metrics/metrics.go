@@ -3,7 +3,7 @@ package metrics
 import (
 	"time"
 
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
+	"github.com/PrPlanIT/HASteward/src/output/model"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"

@@ -3,7 +3,7 @@ package triage
 import (
 	"context"
 
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
+	"github.com/PrPlanIT/HASteward/src/output/model"
 )
 
 // Triager is the engine-specific hook contract for triage operations.

@@ -3,7 +3,7 @@ package retention
 import (
 	"context"
 
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
+	"github.com/PrPlanIT/HASteward/src/output/model"
 )
 
 // Retainer is the engine-specific hook contract for backup retention operations.

@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"time"
 
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine/backup"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/printer"
+	"github.com/PrPlanIT/HASteward/src/engine/backup"
+	"github.com/PrPlanIT/HASteward/src/output"
+	"github.com/PrPlanIT/HASteward/src/output/model"
+	"github.com/PrPlanIT/HASteward/src/output/printer"
 
 	"github.com/spf13/cobra"
 )

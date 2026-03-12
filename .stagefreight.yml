@@ -2,6 +2,8 @@ version: 1
 
 vars:
   org: prplanit
+  github_org: PrPlanIT
+  gitlab_group: PrPlanIT
   repo: hasteward
   github_repo: HASteward
 
@@ -9,7 +11,7 @@ sources:
   primary:
     kind: git
     worktree: "."
-    url: "https://gitlab.prplanit.com/precisionplanit/{var:repo}"
+    url: "https://gitlab.prplanit.com/{var:gitlab_group}/{var:repo}"
     default_branch: "main"
 
 policies:
@@ -75,7 +77,7 @@ targets:
     when: { branches: [main], events: [push, tag] }
     file: "README.md"
     description: "High Availability Steward - database cluster recovery with restic-backed dedup backups"
-    link_base: "https://github.com/{var:org}/{var:github_repo}/blob/main"
+    link_base: "https://github.com/{var:github_org}/{var:github_repo}/blob/main"
 
   # ── Primary release ─────────────────────────────────────────────
   - id: primary-release
@@ -85,7 +87,7 @@ targets:
 
 narrator:
   - file: "README.md"
-    link_base: "https://github.com/{var:org}/{var:github_repo}/blob/main"
+    link_base: "https://github.com/{var:github_org}/{var:github_repo}/blob/main"
     items:
       # ── Project section (repo health & sources) ─────────────────
       - id: project.github
@@ -95,7 +97,7 @@ narrator:
           mode: replace
           inline: true
         shield: "badge/GitHub-source-181717?logo=github"
-        link: "https://github.com/{var:org}/{var:github_repo}"
+        link: "https://github.com/{var:github_org}/{var:github_repo}"
 
       - id: project.gitlab
         kind: shield
@@ -104,7 +106,7 @@ narrator:
           mode: replace
           inline: true
         shield: "badge/GitLab-source-FC6D26?logo=gitlab"
-        link: "https://gitlab.prplanit.com/precisionplanit/{var:repo}"
+        link: "https://gitlab.prplanit.com/{var:gitlab_group}/{var:repo}"
 
       - id: project.go-report
         kind: props
@@ -114,7 +116,7 @@ narrator:
           mode: replace
           inline: true
         params:
-          module: "github.com/{var:org}/{var:github_repo}"
+          module: "github.com/{var:github_org}/{var:github_repo}"
 
       - id: project.last-commit
         kind: props
@@ -166,7 +168,7 @@ narrator:
         color: auto
         font: monofur
         output: ".stagefreight/badges/build.svg"
-        link: "https://gitlab.prplanit.com/precisionplanit/{var:repo}/-/pipelines"
+        link: "https://gitlab.prplanit.com/{var:gitlab_group}/{var:repo}/-/pipelines"
 
       - id: badge.license
         kind: badge
@@ -193,7 +195,7 @@ narrator:
         font: dejavu-sans
         font_size: 11
         output: ".stagefreight/badges/release.svg"
-        link: "https://github.com/{var:org}/{var:github_repo}/releases"
+        link: "https://github.com/{var:github_org}/{var:github_repo}/releases"
 
       - id: badge.updated
         kind: badge
@@ -224,7 +226,7 @@ narrator:
           mode: replace
           inline: true
         shield: "badge/sponsor-EA4AAA?logo=githubsponsors&logoColor=white"
-        link: "https://github.com/sponsors/{var:org}"
+        link: "https://github.com/sponsors/{var:github_org}"
 
       # ── Image section ───────────────────────────────────────────
       # Row 1: Docker image + pulls

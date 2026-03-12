@@ -8,8 +8,8 @@ import (
 	"os"
 	"time"
 
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/render"
+	"github.com/PrPlanIT/HASteward/src/output/model"
+	"github.com/PrPlanIT/HASteward/src/output/render"
 )
 
 // Printer is the central coordinator for all output.

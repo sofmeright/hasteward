@@ -6,10 +6,10 @@ import (
 	"os"
 	"strconv"
 
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/printer"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/restic"
+	"github.com/PrPlanIT/HASteward/src/common"
+	"github.com/PrPlanIT/HASteward/src/output/model"
+	"github.com/PrPlanIT/HASteward/src/output/printer"
+	"github.com/PrPlanIT/HASteward/src/restic"
 
 	"github.com/spf13/cobra"
 )

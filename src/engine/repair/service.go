@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/engine"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/model"
+	"github.com/PrPlanIT/HASteward/src/engine"
+	"github.com/PrPlanIT/HASteward/src/output/model"
 )
 
 // Run is the shared repair lifecycle. All engines go through this flow.

@@ -3,9 +3,9 @@ package main
 import (
 	"os"
 
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/cmd"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output"
+	"github.com/PrPlanIT/HASteward/src/cmd"
+	"github.com/PrPlanIT/HASteward/src/common"
+	"github.com/PrPlanIT/HASteward/src/output"
 )
 
 func main() {

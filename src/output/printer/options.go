@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output/style"
+	"github.com/PrPlanIT/HASteward/src/output/style"
 )
 
 // OutputMode defines the output format.

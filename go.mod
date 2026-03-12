@@ -1,4 +1,4 @@
-module gitlab.prplanit.com/precisionplanit/hasteward
+module github.com/PrPlanIT/HASteward
 
 go 1.26.1
 

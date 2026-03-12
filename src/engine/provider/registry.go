@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
+	"github.com/PrPlanIT/HASteward/src/common"
 )
 
 // EngineProvider holds engine identity, validates prerequisites, and provides

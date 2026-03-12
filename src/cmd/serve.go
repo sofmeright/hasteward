@@ -3,8 +3,8 @@ package cmd
 import (
 	"os"
 
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
-	"gitlab.prplanit.com/precisionplanit/hasteward/controller"
+	"github.com/PrPlanIT/HASteward/src/common"
+	"github.com/PrPlanIT/HASteward/controller"
 
 	"github.com/spf13/cobra"
 )

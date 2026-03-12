@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"gitlab.prplanit.com/precisionplanit/hasteward/internal/docsgen"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/output"
+	"github.com/PrPlanIT/HASteward/internal/docsgen"
+	"github.com/PrPlanIT/HASteward/src/output"
 
 	"github.com/spf13/cobra"
 )

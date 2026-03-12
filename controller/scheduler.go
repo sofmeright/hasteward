@@ -6,10 +6,10 @@ import (
 	"sync"
 	"time"
 
-	v1alpha1 "gitlab.prplanit.com/precisionplanit/hasteward/api/v1alpha1"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/k8s"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/metrics"
+	v1alpha1 "github.com/PrPlanIT/HASteward/api/v1alpha1"
+	"github.com/PrPlanIT/HASteward/src/common"
+	"github.com/PrPlanIT/HASteward/src/k8s"
+	"github.com/PrPlanIT/HASteward/src/metrics"
 
 	"github.com/robfig/cron/v3"
 	corev1 "k8s.io/api/core/v1"

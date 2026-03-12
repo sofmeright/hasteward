@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	v1alpha1 "gitlab.prplanit.com/precisionplanit/hasteward/api/v1alpha1"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/common"
-	"gitlab.prplanit.com/precisionplanit/hasteward/src/k8s"
+	v1alpha1 "github.com/PrPlanIT/HASteward/api/v1alpha1"
+	"github.com/PrPlanIT/HASteward/src/common"
+	"github.com/PrPlanIT/HASteward/src/k8s"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
