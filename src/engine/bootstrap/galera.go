@@ -212,7 +212,7 @@ func (b *galeraBootstrap) Bootstrap(ctx context.Context, dryRun bool) (*model.Bo
 		{Phase: model.PhaseClusterPatch, Description: "Patch CR forceClusterBootstrapInPod=" + candidate.Pod, Resource: &crRef},
 		{Phase: model.PhaseScaleUp, Description: fmt.Sprintf("Scale StatefulSet to %d", b.p.Replicas()), Resource: &stsRef},
 		{Phase: model.PhaseWaitReady, Description: "Wait for all pods Ready"},
-		{Phase: model.PhaseCleanup, Description: "Remove forceClusterBootstrapInPod and generation lock", Resource: &crRef},
+		{Phase: model.PhaseCleanup, Description: "Remove forceClusterBootstrapInPod, recovery status, and generation lock", Resource: &crRef},
 		{Phase: model.PhaseResume, Description: "Resume MariaDB CR", Resource: &crRef},
 		{Phase: model.PhaseVerify, Description: "Re-triage to verify cluster health"},
 	}
@@ -492,6 +492,26 @@ echo "=== Done ==="
 	}
 	if err != nil {
 		common.WarnLog("Failed to clear forceClusterBootstrapInPod after retries: %v\nManual cleanup may be required.", err)
+	}
+
+	// Clear stale operator recovery status — prevents operator from
+	// re-entering bootstrap mode when CR is resumed
+	common.InfoLog("Clearing operator recovery status (status.galeraRecovery)")
+	recoveryClearPatch := `{"status":{"galeraRecovery":null}}`
+	for attempt := 1; attempt <= 5; attempt++ {
+		_, serr := c.Dynamic.Resource(k8s.MariaDBGVR).Namespace(ns).
+			Patch(ctx, cfg.ClusterName, types.MergePatchType,
+				[]byte(recoveryClearPatch), metav1.PatchOptions{}, "status")
+		if serr == nil {
+			break
+		}
+		common.WarnLog("status.galeraRecovery clear attempt %d failed: %v", attempt, serr)
+		time.Sleep(2 * time.Second)
+	}
+	// Verify the field is actually gone
+	statusObj, verr := c.Dynamic.Resource(k8s.MariaDBGVR).Namespace(ns).Get(ctx, cfg.ClusterName, metav1.GetOptions{})
+	if verr == nil && k8s.HasNestedField(statusObj, "status", "galeraRecovery") {
+		common.WarnLog("status.galeraRecovery still present after clear — operator may re-populate it")
 	}
 
 	// Remove generation lock
