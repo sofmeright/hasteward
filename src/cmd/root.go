@@ -46,7 +46,10 @@ func init() {
 	pf.StringVarP(&Cfg.Engine, "engine", "e", common.Env("ENGINE", ""), "Database engine: cnpg or galera")
 	pf.StringVarP(&Cfg.ClusterName, "cluster", "c", common.Env("CLUSTER", ""), "Database cluster CR name")
 	pf.StringVarP(&Cfg.Namespace, "namespace", "n", common.Env("NAMESPACE", ""), "Kubernetes namespace")
-	pf.BoolVarP(&Cfg.Force, "force", "f", common.EnvBool("FORCE", false), "Override safety checks (targeted repair only)")
+	pf.BoolVarP(&Cfg.Force, "force", "f", common.EnvBool("FORCE", false),
+		"Override automatic safety refusal for targeted repair. In ambiguous Galera\n"+
+			"recovery states (divergent UUIDs, split-brain, no clear primary), --donor is\n"+
+			"required to declare the authoritative source node.")
 	pf.StringVar(&Cfg.BackupsPath, "backups-path", common.Env("BACKUPS_PATH", ""), "Restic repository path or URL")
 	pf.StringVar(&Cfg.ResticPassword, "restic-password", common.EnvRaw("RESTIC_PASSWORD", common.Env("RESTIC_PASSWORD", "")), "Restic repository encryption password")
 	pf.BoolVar(&Cfg.NoEscrow, "no-escrow", common.EnvBool("NO_ESCROW", false), "Skip pre-repair escrow backup")
@@ -61,8 +64,9 @@ func init() {
 	pf.Bool("no-color", false, "Disable color output")
 	pf.Bool("debug", false, "Enable debug output")
 
-	// Instance flag needs special handling for optional int
+	// Instance and donor flags need special handling for optional int
 	pf.StringP("instance", "i", common.Env("INSTANCE", ""), "Target specific instance number")
+	pf.StringP("donor", "d", common.Env("DONOR", ""), "Explicit donor instance ordinal (declares authoritative source for repair)")
 
 	RootCmd.AddCommand(triageCmd, repairCmd, backupCmd, restoreCmd, serveCmd, getCmd, exportCmd, pruneCmd)
 }
@@ -101,6 +105,24 @@ func ResolveInstance(cmd *cobra.Command) error {
 	return nil
 }
 
+// ResolveDonor parses the --donor flag into Cfg.DonorInstance.
+func ResolveDonor(cmd *cobra.Command) error {
+	raw, _ := cmd.Flags().GetString("donor")
+	if raw == "" {
+		Cfg.DonorInstance = nil
+		return nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return fmt.Errorf("--donor must be an integer, got %q", raw)
+	}
+	if n < 0 {
+		return fmt.Errorf("--donor must be non-negative, got %d", n)
+	}
+	Cfg.DonorInstance = &n
+	return nil
+}
+
 // PreRun validates required flags, initializes K8s clients, and resolves the engine provider.
 func PreRun(cmd *cobra.Command, mode string) (provider.EngineProvider, error) {
 	Cfg.Mode = mode
@@ -135,6 +157,9 @@ func PreRun(cmd *cobra.Command, mode string) (provider.EngineProvider, error) {
 	}
 
 	if err := ResolveInstance(cmd); err != nil {
+		return nil, err
+	}
+	if err := ResolveDonor(cmd); err != nil {
 		return nil, err
 	}
 

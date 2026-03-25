@@ -43,9 +43,10 @@ func init() {
 
 // galeraRepair implements Repairer for MariaDB Galera clusters.
 type galeraRepair struct {
-	p       *provider.GaleraProvider
-	triager triage.Triager
-	backuper backup.Backer
+	p              *provider.GaleraProvider
+	triager        triage.Triager
+	backuper       backup.Backer
+	donorSelection *DonorSelection // Resolved once in SafetyGate, immutable for the run
 }
 
 func (g *galeraRepair) Name() string { return "galera" }
@@ -56,19 +57,16 @@ func (g *galeraRepair) Assess(ctx context.Context) (*model.TriageResult, error) 
 	return triage.Run(ctx, g.triager, engine.NopSink{})
 }
 
-// SafetyGate verifies at least one healthy donor exists for SST.
+// SafetyGate resolves the donor and verifies it is suitable for SST.
+// The resolved donor is cached on g.donorSelection for use by all downstream steps.
 func (g *galeraRepair) SafetyGate(ctx context.Context, result *model.TriageResult) error {
-	anyRunning := false
-	for _, a := range result.Assessments {
-		if a.IsRunning && a.IsReady {
-			anyRunning = true
-			break
-		}
+	output.Section("Phase 2: Donor Resolution")
+	ds, err := g.resolveRepairDonor(ctx, result)
+	if err != nil {
+		return err
 	}
-	if !anyRunning {
-		return fmt.Errorf("ABORT: No healthy donor nodes found. All nodes are down or unhealthy. " +
-			"Cannot heal without a running donor to provide SST")
-	}
+	g.donorSelection = ds
+	displayDonorSelection(ds)
 	return nil
 }
 
@@ -82,17 +80,17 @@ func (g *galeraRepair) Escrow(ctx context.Context, result *model.TriageResult) e
 			return fmt.Errorf("repair requires --backups-path and RESTIC_PASSWORD for escrow (or --no-escrow to skip)")
 		}
 
-		if len(result.DataComparison.PrimaryMembers) > 0 {
-			donor := result.DataComparison.PrimaryMembers[0]
+		if g.donorSelection != nil {
+			donor := g.donorSelection.Pod
 			ns := cfg.Namespace
 			stdinFilename := fmt.Sprintf("%s/%s/%s", ns, cfg.ClusterName, galeraDumpFilename)
 			escrowResult, err := g.backuper.BackupDump(ctx, "backup", donor, stdinFilename, start, nil)
 			if err != nil {
 				return fmt.Errorf("pre-repair backup failed: %w", err)
 			}
-			common.InfoLog("Pre-repair backup: %s", escrowResult.SnapshotID)
+			common.InfoLog("Pre-repair backup from %s: %s", donor, escrowResult.SnapshotID)
 		} else {
-			common.WarnLog("No nodes in Primary component for pre-repair backup. Skipping.")
+			common.WarnLog("No donor resolved for pre-repair backup. Skipping.")
 		}
 	} else {
 		common.WarnLog("no_escrow=true — proceeding without pre-repair backup")

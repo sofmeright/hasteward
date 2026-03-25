@@ -24,6 +24,7 @@ type Config struct {
 	Namespace      string
 	Mode           string
 	InstanceNumber *int
+	DonorInstance  *int // Explicit donor ordinal for forced repair (declares authoritative source)
 	Force          bool
 	BackupsPath    string
 	NoEscrow       bool

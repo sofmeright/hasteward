@@ -69,8 +69,10 @@ type TriageResult struct {
 	TotalCount     int                  `json:"totalCount"`
 
 	// Galera-specific
-	AllNodesDown  bool                `json:"allNodesDown,omitempty"`
-	BestSeqnoNode *InstanceAssessment `json:"bestSeqnoNode,omitempty"`
+	AllNodesDown     bool                `json:"allNodesDown,omitempty"`
+	BestSeqnoNode    *InstanceAssessment `json:"bestSeqnoNode,omitempty"`
+	AuthorityStatus  string              `json:"authorityStatus,omitempty"`  // "unambiguous" or "ambiguous"
+	RecommendedDonor string              `json:"recommendedDonor,omitempty"` // ordinal or "none"
 }
 
 // BackupResult holds the outcome of a backup operation.

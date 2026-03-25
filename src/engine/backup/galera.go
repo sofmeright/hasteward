@@ -73,14 +73,17 @@ func (b *galeraBackup) BackupDump(ctx context.Context, backupType, donor, stdinF
 	output.Field("Donor", donor)
 	output.Field("Repository", cfg.BackupsPath)
 
-	// Verify donor is running and ready
+	// Verify donor pod exists and is Running.
+	// K8s container readiness is NOT checked here — the donor was already
+	// validated upstream via Galera wsrep probe. Re-gating on K8s readiness
+	// would reintroduce the abstraction leak this design explicitly removes.
 	c := k8s.GetClients()
 	pod, err := c.Clientset.CoreV1().Pods(ns).Get(ctx, donor, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("donor pod %s not found: %w", donor, err)
 	}
-	if pod.Status.Phase != "Running" || len(pod.Status.ContainerStatuses) == 0 || !pod.Status.ContainerStatuses[0].Ready {
-		return nil, fmt.Errorf("donor pod %s is not running and ready", donor)
+	if pod.Status.Phase != "Running" {
+		return nil, fmt.Errorf("donor pod %s is not Running (phase: %s)", donor, pod.Status.Phase)
 	}
 
 	// Initialize restic repo (idempotent)

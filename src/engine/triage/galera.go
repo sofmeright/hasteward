@@ -497,18 +497,35 @@ func (t *galeraTriage) Analyze(_ context.Context) (*model.TriageResult, error) {
 		}
 	}
 
+	// Compute authority status for donor recommendation using Galera facts only.
+	// IsReady (K8s readiness) is deliberately NOT used here — authority is about
+	// history consistency, not operator/probe readiness.
+	authorityStatus := "ambiguous"
+	recommendedDonor := "none"
+	if comparison.SafeToHeal {
+		authorityStatus = "unambiguous"
+		for _, a := range assessments {
+			if a.WsrepReady == "ON" && a.WsrepConnected == "ON" && a.WsrepStateComment == "Synced" {
+				recommendedDonor = fmt.Sprintf("%d", a.Instance)
+				break
+			}
+		}
+	}
+
 	result := &model.TriageResult{
 		Engine: t.Name(),
 		Cluster: model.ObjectRef{
 			Namespace: t.p.Config().Namespace,
 			Name:      t.p.Config().ClusterName,
 		},
-		Assessments:    assessments,
-		DataComparison: comparison,
-		ReadyCount:     len(data.primaryMembers),
-		TotalCount:     int(t.p.Replicas()),
-		AllNodesDown:   data.allNodesDown,
-		BestSeqnoNode:  bestSeqnoAssessment,
+		Assessments:      assessments,
+		DataComparison:   comparison,
+		ReadyCount:       len(data.primaryMembers),
+		TotalCount:       int(t.p.Replicas()),
+		AllNodesDown:     data.allNodesDown,
+		BestSeqnoNode:    bestSeqnoAssessment,
+		AuthorityStatus:  authorityStatus,
+		RecommendedDonor: recommendedDonor,
 	}
 
 	t.triageDisplay(data, result)
@@ -851,6 +868,12 @@ func (t *galeraTriage) triageDisplay(data *galeraTriageData, result *model.Triag
 		output.Println("Safe to heal nodes: NO - SPLIT-BRAIN DETECTED - review data above")
 	}
 	output.Printf("All nodes down: %v\n", data.allNodesDown)
+	output.Printf("Authority status: %s\n", result.AuthorityStatus)
+	if result.RecommendedDonor != "none" {
+		output.Printf("Recommended donor: %s\n", result.RecommendedDonor)
+	} else {
+		output.Println("Recommended donor: none (authority ambiguous; operator must choose)")
+	}
 	output.Println()
 
 	// Per-instance assessment
