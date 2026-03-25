@@ -56,7 +56,7 @@ func (g *galeraRepair) resolveExplicitDonor(ctx context.Context, ordinal int, re
 	donorPod := fmt.Sprintf("%s-%d", cfg.ClusterName, ordinal)
 
 	// Structural validation: ordinal in range
-	replicas := g.p.Replicas()
+	replicas := int(g.p.Replicas())
 	if ordinal >= replicas {
 		return nil, fmt.Errorf("ABORT: donor ordinal %d is out of range (cluster has instances 0–%d)", ordinal, replicas-1)
 	}

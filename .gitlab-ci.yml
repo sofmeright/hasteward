@@ -15,10 +15,10 @@ workflow:
 
 build-image:
   stage: build
-  image: docker.jcr.pcfae.com/prplanit/stagefreight:latest-dev
+  image: docker.cr.pcfae.com/prplanit/stagefreight:latest-dev
   interruptible: true
   services:
-    - name: docker.jcr.pcfae.com/docker:27-dind
+    - name: docker.cr.pcfae.com/docker:27-dind
       alias: docker
   variables:
     DOCKER_HOST: "tcp://docker:2376"
@@ -44,11 +44,11 @@ build-image:
 
 security-scan:
   stage: security
-  image: docker.jcr.pcfae.com/prplanit/stagefreight:latest-dev
+  image: docker.cr.pcfae.com/prplanit/stagefreight:latest-dev
   interruptible: true
   needs: [build-image]
   services:
-    - name: docker.jcr.pcfae.com/docker:27-dind
+    - name: docker.cr.pcfae.com/docker:27-dind
       alias: docker
   variables:
     DOCKER_HOST: "tcp://docker:2376"
@@ -73,7 +73,7 @@ security-scan:
 
 generate-docs:
   stage: docs
-  image: docker.jcr.pcfae.com/prplanit/stagefreight:latest-dev
+  image: docker.cr.pcfae.com/prplanit/stagefreight:latest-dev
   needs: [build-image]
   variables:
     GIT_DEPTH: 0
@@ -100,7 +100,7 @@ generate-docs:
 
 create-release:
   stage: release
-  image: docker.jcr.pcfae.com/prplanit/stagefreight:latest-dev
+  image: docker.cr.pcfae.com/prplanit/stagefreight:latest-dev
   variables:
     GIT_DEPTH: 0
   needs:
