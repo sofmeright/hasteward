@@ -57,6 +57,9 @@ func init() {
 		"Wipe entire datadir on target instance (not just grastate). Forces full SST\n"+
 			"reseed from donor. Use when local data is irrecoverably corrupted. Requires\n"+
 			"--force and --instance.")
+	pf.BoolVar(&Cfg.FixBootstrap, "fix-bootstrap", common.EnvBool("FIX_BOOTSTRAP", false),
+		"Reconfigure: clear grastate and remove bootstrap config on target instance.\n"+
+			"Prevents stale local bootstrap behavior during cluster restart.")
 	pf.StringVarP(&Cfg.BackupMethod, "method", "m", common.Env("BACKUP_METHOD", "dump"), "Backup method: dump or native")
 	pf.StringVar(&Cfg.Snapshot, "snapshot", common.Env("SNAPSHOT", "latest"), "Restic snapshot ID or 'latest' (for restore)")
 	pf.IntVar(&Cfg.HealTimeout, "heal-timeout", common.EnvInt("HEAL_TIMEOUT", 600), "Heal wait timeout in seconds")
@@ -72,7 +75,7 @@ func init() {
 	pf.StringP("instance", "i", common.Env("INSTANCE", ""), "Target specific instance number")
 	pf.StringP("donor", "d", common.Env("DONOR", ""), "Explicit donor instance ordinal (declares authoritative source for repair)")
 
-	RootCmd.AddCommand(triageCmd, repairCmd, backupCmd, restoreCmd, serveCmd, getCmd, exportCmd, pruneCmd)
+	RootCmd.AddCommand(triageCmd, repairCmd, reconfigureCmd, backupCmd, restoreCmd, serveCmd, getCmd, exportCmd, pruneCmd)
 }
 
 // IsDryRun returns whether --dry-run was specified.
