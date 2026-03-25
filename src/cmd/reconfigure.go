@@ -31,19 +31,22 @@ Requires --force, --instance, and at least one action flag (--fix-bootstrap).`,
 		if !Cfg.Force {
 			return fmt.Errorf("ABORT: reconfigure requires --force (this is a cluster-scoped operation)")
 		}
-		if Cfg.InstanceNumber == nil {
-			return fmt.Errorf("ABORT: reconfigure requires --instance (must target a specific node)")
-		}
 		if !Cfg.FixBootstrap {
 			return fmt.Errorf("ABORT: no reconfigure action specified. Use --fix-bootstrap or another action flag")
 		}
-		if *Cfg.InstanceNumber < 0 {
-			return fmt.Errorf("ABORT: instance must be non-negative, got %d", *Cfg.InstanceNumber)
-		}
 
+		// PreRun parses --instance, validates required flags, inits K8s
 		prov, err := PreRun(cmd, "reconfigure")
 		if err != nil {
 			return err
+		}
+
+		// Instance check after PreRun (ResolveInstance parses the flag)
+		if Cfg.InstanceNumber == nil {
+			return fmt.Errorf("ABORT: reconfigure requires --instance (must target a specific node)")
+		}
+		if *Cfg.InstanceNumber < 0 {
+			return fmt.Errorf("ABORT: instance must be non-negative, got %d", *Cfg.InstanceNumber)
 		}
 
 		reconf, err := reconfigure.Get(prov)
