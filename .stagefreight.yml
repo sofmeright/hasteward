@@ -35,7 +35,7 @@ targets:
     provider: docker
     path: "{var:org}/{var:repo}"
     tags:
-      - "{version}"
+      - "v{version}"
       - "latest"
     when: { git_tags: [stable], events: [tag] }
     credentials: DOCKER
@@ -48,7 +48,7 @@ targets:
     provider: docker
     path: "{var:org}/{var:repo}"
     tags:
-      - "{version}"
+      - "v{version}"
     when: { git_tags: [prerelease], events: [tag] }
     credentials: DOCKER
 
