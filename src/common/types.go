@@ -26,6 +26,7 @@ type Config struct {
 	InstanceNumber *int
 	DonorInstance  *int // Explicit donor ordinal for forced repair (declares authoritative source)
 	Force          bool
+	WipeDatadir    bool // Wipe entire datadir (not just grastate) — forces full SST reseed from donor
 	BackupsPath    string
 	NoEscrow       bool
 	BackupMethod   string

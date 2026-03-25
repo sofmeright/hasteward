@@ -98,24 +98,29 @@ func ExecStream(ctx context.Context, pod, namespace, container string,
 	})
 }
 
-// ExecCommandWithEnv runs a command in a container, wrapping it in sh -c
-// to set environment variables. This avoids exposing secrets in command args
-// visible to process listings.
+// ExecCommandWithEnv runs a command in a container with environment variables.
+// Env vars are set via shell exports, but the actual command is passed as
+// positional args through exec "$@" — preserving argv exactly without shell
+// reparsing. This avoids exposing secrets in command args visible to process
+// listings, and prevents shell metacharacters in args (SQL parentheses, quotes)
+// from being interpreted.
 func ExecCommandWithEnv(ctx context.Context, pod, namespace, container string,
 	env map[string]string, command []string) (*ExecResult, error) {
 
-	// Build the env var exports and the actual command as a single shell script
+	// Build a minimal shell script that exports env vars then exec's the real command.
+	// The real command is passed as positional args ($@), never reparsed by the shell.
 	var script bytes.Buffer
 	for k, v := range env {
-		// Use printf to avoid issues with special characters in values
-		fmt.Fprintf(&script, "export %s=\"$(printf '%%s' '%s')\"\n", k, ShellEscape(v))
+		fmt.Fprintf(&script, "export %s='%s'\n", k, ShellEscape(v))
 	}
-	for _, arg := range command {
-		// Quote each arg to prevent shell interpretation of special chars
-		fmt.Fprintf(&script, "'%s' ", ShellEscape(arg))
-	}
+	script.WriteString("exec \"$@\"")
 
-	return ExecCommand(ctx, pod, namespace, container, []string{"sh", "-c", script.String()})
+	// sh -c '<script>' sh <command args...>
+	// The "sh" after the script is $0; command args become $1, $2, etc.
+	args := []string{"sh", "-c", script.String(), "sh"}
+	args = append(args, command...)
+
+	return ExecCommand(ctx, pod, namespace, container, args)
 }
 
 // ShellEscape escapes single quotes for use in a single-quoted shell string.

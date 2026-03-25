@@ -296,7 +296,11 @@ func (g *galeraRepair) healNode(ctx context.Context, targetPod string, instanceN
 	output.Bullet(0, "Strategy: %s (scale to %d)", strategy, scaleTarget)
 	output.Bullet(0, "1. Suspend MariaDB CR (operator stops reconciling)")
 	output.Bullet(0, "2. Scale down StatefulSet to %d (release PVCs)", scaleTarget)
-	output.Bullet(0, "3. Wipe grastate.dat + galera.cache on storage PVC")
+	if cfg.WipeDatadir {
+		output.Bullet(0, "3. WIPE ENTIRE DATADIR on storage PVC (full SST reseed)")
+	} else {
+		output.Bullet(0, "3. Wipe grastate.dat + galera.cache on storage PVC")
+	}
 	if hasGaleraPVC {
 		output.Bullet(0, "4. Remove bootstrap config from galera PVC")
 	} else {
@@ -356,9 +360,31 @@ func (g *galeraRepair) healNode(ctx context.Context, targetPod string, instanceN
 		time.Sleep(5 * time.Second)
 	}
 
-	// STEP 3: Wipe grastate.dat + galera.cache on storage PVC
-	common.InfoLog("STEP 3: Wiping grastate.dat + galera.cache")
-	storageScript := `set -e
+	// STEP 3: Wipe storage PVC
+	var storageScript string
+	if cfg.WipeDatadir {
+		common.WarnLog("STEP 3: WIPING ENTIRE DATADIR on %s (--wipe-datadir)", targetPod)
+		storageScript = `set -e
+echo "=== FULL DATADIR WIPE ==="
+echo "Contents before wipe:"
+ls -la /var/lib/mysql/ 2>/dev/null || echo "  (empty or not mounted)"
+echo ""
+echo "=== Verifying mount ==="
+if [ ! -d /var/lib/mysql ]; then
+  echo "ERROR: /var/lib/mysql does not exist"
+  exit 1
+fi
+mountpoint -q /var/lib/mysql || echo "WARNING: /var/lib/mysql is not a mountpoint"
+echo "=== Wiping all data ==="
+rm -rf /var/lib/mysql/*
+rm -rf /var/lib/mysql/.*  2>/dev/null || true
+echo "=== Datadir wiped ==="
+ls -la /var/lib/mysql/ 2>/dev/null || echo "  (empty)"
+echo "=== Done! Node will require full SST from donor ==="
+`
+	} else {
+		common.InfoLog("STEP 3: Wiping grastate.dat + galera.cache")
+		storageScript = `set -e
 echo "=== Current grastate.dat ==="
 cat /var/lib/mysql/grastate.dat 2>/dev/null || echo "not found"
 echo ""
@@ -379,6 +405,7 @@ echo "=== Preserving galera.cache ==="
 mv /var/lib/mysql/galera.cache /var/lib/mysql/galera.cache.pre-heal 2>/dev/null || echo "no galera.cache to preserve"
 echo "=== Done! ==="
 `
+	}
 	if err := g.runHelperPod(ctx, storageHelper, storagePVC, "/var/lib/mysql", storageScript, sa); err != nil {
 		rescue()
 		return fmt.Errorf("storage helper failed: %w", err)

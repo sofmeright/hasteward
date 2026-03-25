@@ -53,6 +53,10 @@ func init() {
 	pf.StringVar(&Cfg.BackupsPath, "backups-path", common.Env("BACKUPS_PATH", ""), "Restic repository path or URL")
 	pf.StringVar(&Cfg.ResticPassword, "restic-password", common.EnvRaw("RESTIC_PASSWORD", common.Env("RESTIC_PASSWORD", "")), "Restic repository encryption password")
 	pf.BoolVar(&Cfg.NoEscrow, "no-escrow", common.EnvBool("NO_ESCROW", false), "Skip pre-repair escrow backup")
+	pf.BoolVar(&Cfg.WipeDatadir, "wipe-datadir", common.EnvBool("WIPE_DATADIR", false),
+		"Wipe entire datadir on target instance (not just grastate). Forces full SST\n"+
+			"reseed from donor. Use when local data is irrecoverably corrupted. Requires\n"+
+			"--force and --instance.")
 	pf.StringVarP(&Cfg.BackupMethod, "method", "m", common.Env("BACKUP_METHOD", "dump"), "Backup method: dump or native")
 	pf.StringVar(&Cfg.Snapshot, "snapshot", common.Env("SNAPSHOT", "latest"), "Restic snapshot ID or 'latest' (for restore)")
 	pf.IntVar(&Cfg.HealTimeout, "heal-timeout", common.EnvInt("HEAL_TIMEOUT", 600), "Heal wait timeout in seconds")
@@ -161,6 +165,16 @@ func PreRun(cmd *cobra.Command, mode string) (provider.EngineProvider, error) {
 	}
 	if err := ResolveDonor(cmd); err != nil {
 		return nil, err
+	}
+
+	// --wipe-datadir requires --force and --instance
+	if Cfg.WipeDatadir {
+		if !Cfg.Force {
+			return nil, fmt.Errorf("--wipe-datadir requires --force (this is a destructive operation)")
+		}
+		if Cfg.InstanceNumber == nil {
+			return nil, fmt.Errorf("--wipe-datadir requires --instance (must target a specific node)")
+		}
 	}
 
 	if _, err := k8s.Init(Cfg.Kubeconfig); err != nil {
